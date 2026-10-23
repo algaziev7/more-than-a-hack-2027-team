@@ -4,6 +4,10 @@ Read `docs/team/CONTEXT.md`, `TEAM_PLAN.md`, `docs/team/INTERFACES.md`,
 `docs/team/WORKFLOW.md`, and the assigned engineer's file in `docs/team/owners/`
 before working. Read related owners' files when consuming their modules.
 
+Owner handoffs: E1 `azamat.md`; E2 `belek_isken.md`; E3
+`almaz.md`; E4 `beks.md`; E5 `goblin.md` (AI agents).
+All are under `docs/team/owners/`. Azamat reviews E5 changes.
+
 These documents describe a proposed implementation. Do not claim a planned
 module, command, experiment, or result already exists. Check the code and Git status.
 

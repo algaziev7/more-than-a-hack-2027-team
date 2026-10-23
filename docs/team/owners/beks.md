@@ -1,26 +1,24 @@
-# E5 — Integration and documentation
+# Beks — Tracking features and evaluation
 
-- Person: unassigned
+- Owner: Beks
 - Status: not started
 - Branch: not created
-- Reviewer: E1
-- Owned files: possession/pipeline.py; integration tests; CI; documentation assembly; .gitignore
+- Reviewer: E3
+- Owned files: possession/features.py; scripts/check_solution.py; feature tests and evaluation policy
 - Current milestone: first four focused hours
 - Last update: 2026-10-23
 
 ## Completed and verified
 
-Team repository created at https://github.com/algaziev7/more-than-a-hack-2027-team.
-Planning and shared context files prepared. No prediction implementation or
-full-data runs completed.
+Planning only. No implementation, tests, or full-data runs completed.
 
 ## Next exact action
 
-Configure collaborator access, share this plan, and wire a thin pipeline against synthetic contracts.
+Agree on units and validity masks, implement synthetic distance/speed features, and document allowed validation sources.
 
 ## Blockers and dependencies
 
-Collaborator access and member assignments pending. Use synthetic inputs while E1
+Collaborator access pending; role owners are assigned. Use synthetic inputs while E1
 resolves local data setup. No restricted data in this file or hosted AI context.
 
 ## Handoff — replace with actual evidence at each checkpoint

@@ -8,7 +8,8 @@ A (Athletic Club), D (out of play), or X (abstain). Recover complete possession
 periods, including their boundaries. Official ranking uses spellF1; macroF1 is
 the first tie-break. The published full-match baseline is 0.2433 spellF1.
 
-All five engineers are equally experienced and use AI tools on separate laptops.
+The five human engineers are Azamat, Belek, Isken, Almaz, and Beks. They are
+equally experienced and use AI tools on separate laptops. AI agents handle E5.
 The team reports having the bundle. Its location and completeness have not been
 verified: this checkout has no configured assets, and the downloaded README
 only documents the expected layout. Engineer 1 resolves the local setup first.
@@ -24,11 +25,14 @@ EVALUATION.md, RULES.md, SUBMISSION.md, FAQ.md, and the starter loaders.
 
 ## Ownership and equal workload
 
-Exactly one person owns each role. Engineer 4 is Engineer 2's scheduled review
-partner; do not allocate a sixth person to the core logic. Everyone writes tests
-and their technical-document section. Engineer 5 assembles those sections.
+Azamat owns E1, Belek and Isken share E2, Almaz owns E3, and Beks owns E4.
+E5 is handled by the **Goblin**, the integration/documentation AI agents.
+Beks reviews E2. Everyone writes tests and their technical-document section;
+the Goblin assemble those sections. Azamat reviews E5's changes.
 
-Initial budget: **32 focused hours per person**, or 160 team hours. This is a
+Initial budget: **32 focused hours per human engineer**, or 160 human team hours.
+E2 has two engineers; they divide implementation, testing, and review between
+them. E5 agent work is additional and has no assumed human-hour allocation. This is a
 planning estimate, not a promise. At four focused hours/day it is eight working
 days; scale the calendar to actual availability. Each person's budget includes
 20 hours implementation, 6 hours tests/verification, 4 hours review/integration,
@@ -235,7 +239,7 @@ complex models before cutting integration, validation, or reproducibility.
 
 ## First joint session
 
-1. Assign E1–E5 names in owner files; confirm actual available hours.
+1. Confirm the assigned owners, available hours, and E2 pair task split.
 2. E5 creates the team repo from this starter; everyone clones it separately.
 3. E1 gets the real bundle root from each member and gives setup commands.
 4. Spend 30–45 minutes agreeing on INTERFACES.md. E1 implements the contracts.

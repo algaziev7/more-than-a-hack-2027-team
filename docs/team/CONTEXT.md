@@ -24,8 +24,10 @@ Updated: 2026-10-23. Status: planning complete; team implementation not started.
 ## Working decisions
 
 - One team repository; separate clones and short task branches.
-- E1 data/infra, E2 state machine, E3 dead ball/tags, E4 features/evaluation,
-  E5 integration/docs. Names and actual available hours remain unassigned.
+- E1: Azamat (data/infra). E2: Belek and Isken (state machine).
+  E3: Almaz (dead ball/tags). E4: Beks (features/evaluation).
+  E5: Goblin (AI agents for integration/docs), reviewed by Azamat.
+  Actual available hours remain unconfirmed.
 - First increment uses tactical tracking and tagging; video and broadcast are
   optional extensions after a valid integrated submission exists.
 - Contracts and synthetic examples first; all five work concurrently.
@@ -34,7 +36,7 @@ Updated: 2026-10-23. Status: planning complete; team implementation not started.
 
 ## Current blockers / next actions
 
-1. Assign names and hours in the five owner files.
+1. Confirm available hours and divide E2 tasks between Belek and Isken.
 2. Add team collaborators, clone the team repository, and start task branches.
 3. E1 locates the actual bundle root on each laptop and verifies local setup.
 4. Team agrees on INTERFACES.md; E1 creates contracts/fixtures.

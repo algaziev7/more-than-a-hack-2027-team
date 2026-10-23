@@ -1,10 +1,10 @@
-# E1 — Data and infrastructure
+# Almaz — Dead ball and Smart Tagging
 
-- Person: unassigned
+- Owner: Almaz
 - Status: not started
 - Branch: not created
-- Reviewer: E5
-- Owned files: possession/contracts.py; possession/data.py; possession/export.py; scripts/predict.py; environment files
+- Reviewer: E2
+- Owned files: possession/tagging.py; possession/dead_ball.py; related configuration and tests
 - Current milestone: first four focused hours
 - Last update: 2026-10-23
 
@@ -14,11 +14,11 @@ Planning only. No implementation, tests, or full-data runs completed.
 
 ## Next exact action
 
-Locate the actual bundle root, confirm MTAH_DATA_DIR on all laptops, then implement agreed contracts and synthetic fixtures.
+Define tag semantics and implement synthetic XML cases, including Team=N/A and conflicting phases.
 
 ## Blockers and dependencies
 
-Collaborator access and member assignments pending. Use synthetic inputs while E1
+Collaborator access pending; role owners are assigned. Use synthetic inputs while E1
 resolves local data setup. No restricted data in this file or hosted AI context.
 
 ## Handoff — replace with actual evidence at each checkpoint

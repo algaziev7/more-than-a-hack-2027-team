@@ -29,8 +29,8 @@ for multiple agents or keep five branches apart until the final day.
 git switch main
 git pull --ff-only origin main
 git switch -c e2/state-v1
-# Work, test, and update docs/team/owners/e2.md.
-git add possession/state_machine.py docs/team/owners/e2.md
+# Work, test, and update docs/team/owners/belek_isken.md.
+git add possession/state_machine.py docs/team/owners/belek_isken.md
 # Stage your relevant tests/config explicitly as well.
 git diff --cached
 git commit -m "Add possession hysteresis with synthetic transition tests"
@@ -55,7 +55,7 @@ Resolve conflicts with the relevant file owner. No force pushes to main.
 | TEAM_PLAN.md | E5, team agreement | Roles, scope, milestones, acceptance |
 | INTERFACES.md | E1, consumer review | Stable module contract |
 | CONTEXT.md | E5 at integration checkpoints | What is actually integrated and next |
-| owners/e1.md ... owners/e5.md | Each owner edits their own | Work in progress and handoff |
+| owners/azamat.md ... owners/goblin.md | Each owner edits their own | Work in progress and handoff |
 | decisions/*.md | Decision author, affected-owner review | Why a significant choice was made |
 | experiments/*.md | Experiment author | Hypothesis, evidence source, outcome |
 
@@ -85,7 +85,7 @@ replacing the owner ID, branch, and task:
 
 > You are helping Engineer E2 on branch e2/state-v1. Read AGENTS.md,
 > docs/team/CONTEXT.md, TEAM_PLAN.md, docs/team/INTERFACES.md,
-> docs/team/WORKFLOW.md, and docs/team/owners/e2.md. Inspect Git status and the
+> docs/team/WORKFLOW.md, and docs/team/owners/belek_isken.md. Inspect Git status and the
 > actual implementation. Continue the next task in the owner handoff. Respect
 > ownership and competition rules, use synthetic inputs in hosted AI tools, and
 > update my handoff with completed work, actual verification, and the next step.

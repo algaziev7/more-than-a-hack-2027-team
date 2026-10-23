@@ -1,5 +1,17 @@
 # More than a Hack 2027 — Phase 1: Ball Possession
 
+## Team workspace
+
+This team copy lives at [algaziev7/more-than-a-hack-2027-team](https://github.com/algaziev7/more-than-a-hack-2027-team).
+Start with the [five-person plan](TEAM_PLAN.md), [current context](docs/team/CONTEXT.md),
+and [collaboration workflow](docs/team/WORKFLOW.md). Each engineer keeps a handoff
+in [docs/team/owners/](docs/team/owners/). AI assistants should read [AGENTS.md](AGENTS.md).
+
+The repository is private during development; the final submission code repository
+must be public. Obtain match assets separately through the organisers.
+
+---
+
 **Organised by [Metrica Sports](https://metrica-sports.com), [FC Barcelona](https://www.fcbarcelona.com)
 and the [Mobile World Capital Barcelona](https://www.mwcbarcelona.com)**, at the Talent Arena in Barcelona.
 

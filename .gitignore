@@ -62,3 +62,11 @@ __pycache__/
 venv/
 env/
 .DS_Store
+
+# Team-local processed inputs, experiments, secrets, and submission artifacts.
+/artifacts/
+/runs/
+/.local/
+/.env
+/.env.*
+!/.env.example

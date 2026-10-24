@@ -1,7 +1,9 @@
 # Shared interfaces — proposed version 1
 
-Agree on this at the first session; E1 implements the types. These APIs do not
-exist yet. Changes require a short PR note and review by affected consumers.
+E1 implements these types on branch `e1/data-contract`; this is not yet merged
+or consumer-approved. Other module functions remain planned. Changes require
+a short PR note and review by affected consumers. See [SETUP.md](SETUP.md) for
+the concrete constructor fields, synthetic examples, and configuration contract.
 
 ## Conventions
 
@@ -46,6 +48,8 @@ must not force every consumer to decode video. Do not expose GT through this API
 
 FeatureData carries `frame`, named [N] arrays, a validity mask for each feature,
 `team_evidence` float [N,2] ordered H,A, and `team_reliability` float [N].
+The named arrays are `features: dict[str, ndarray]`; corresponding masks are
+`validity: dict[str, ndarray]`, with exactly the same keys.
 
 Initial features: distance to each team's nearest player, next-nearest distance,
 distance advantage, ball speed, ball-speed validity, ball missing duration,
@@ -69,6 +73,9 @@ reliability 0. Reliability lies in [0,1]. E2 alone owns temporal possession stat
 | tag_team_reliability | float [N], [0,1] |
 | diagnostic_flags | local reason codes; not private data in committed docs |
 
+When present, `diagnostic_flags` is an integer [N] array (bit flags supported).
+The constructor defaults it to None.
+
 No dead-ball evidence => 0.5 with reliability 0. Unknown team => [0.5,0.5] with
 reliability 0. A throw-in can have restart evidence while its team reliability
 is zero. Overlapping tags require a documented conflict policy. Do not count
@@ -82,6 +89,7 @@ Prediction contains labels [N] in H/A/D/X and optional local diagnostics (state
 confidence, transition reasons, candidate boundaries). H/A evidence, stop evidence,
 and restart evidence enter one explicitly documented fusion policy. Neutral or
 unreliable inputs cannot silently become confident predictions.
+Constructor fields are `labels: ndarray` and `diagnostics: dict` (default empty).
 
 Process halves independently. Write X outside the published graded intervals.
 Do not carry the first half's state across halftime. Within a half, document how

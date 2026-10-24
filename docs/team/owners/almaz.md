@@ -1,37 +1,57 @@
-# Almaz — Dead ball and Smart Tagging
+# Almaz — Event tags and stoppages
 
 - Owner: Almaz
-- Status: not started
-- Branch: not created
-- Reviewer: E2
-- Owned files: possession/tagging.py; possession/dead_ball.py; related configuration and tests
-- Current milestone: first four focused hours
-- Last update: 2026-10-23
+- Status: first tagging module works locally; ready for Belek and Isken to review
+- Branch: `almaz/tagging-v1`
+- Reviewer: Belek and Isken
+- Files: `possession/tagging.py`, its tests, and later `possession/dead_ball.py`
+- Last update: 2026-10-24
 
-## Completed and verified
+## What is done
 
-Planning only. No implementation, tests, or full-data runs completed.
+- The module reads event tags and creates team hints, weights, and restart clues
+  for every frame. Belek and Isken will use these in their state machine.
+- Unknown teams do not create a team preference. Conflicting team clues cancel.
+  Repeated tags do not make the clue stronger.
+- All 14 tests passed using invented events and a small invented XML file.
+- Almaz ran `load_tagging_signals()` on his own XML and reported:
+  `Created tagging signals for 199319 frames.`
+- The usage guide is [TAGGING.md](../TAGGING.md). It explains how to load the
+  clues once, keep them in memory, and read them inside the frame loop.
+- No packages were installed. No pyenv or environment settings were changed.
+- The code, tests, and docs are on review branch `almaz/tagging-v1`.
+  They should be reviewed before merging into main.
 
-## Next exact action
+## What to do next
 
-Define tag semantics and implement synthetic XML cases, including Team=N/A and conflicting phases.
+1. Have Belek and Isken review the tagging pull request and TAGGING.md.
+2. After review, merge the branch and connect the clues to their code.
+3. Later, use Beks's movement features to improve detection of stoppages and
+   restarts in `possession/dead_ball.py`.
 
-## Blockers and dependencies
+## What is still missing
 
-Collaborator access pending; role owners are assigned. Use synthetic inputs while E1
-resolves local data setup. No restricted data in this file or hosted AI context.
+The current module does not decide whether play is stopped and does not produce
+final possession labels. It supplies clues. The state machine must combine them
+with other information.
 
-## Handoff — replace with actual evidence at each checkpoint
+We have not measured whether these clues improve possession accuracy. The
+weights are starting choices; they were not chosen using the public answer file.
 
-- Changed files / behavior:
-- Commit or PR reference (a previous commit is fine; do not invent the current hash):
-- Verification command and observed result:
-- Known failures / untested paths:
-- Interface changes and affected owners:
-- Decision and reason:
-- Next task:
-- Help needed from another owner:
+Azamat's new loader is not needed to use the tagging module. Beks's features
+will be needed for the later stoppage detector.
 
-Update this file in the same commit as your code, then push your branch.
-Branch progress is not integrated progress until its PR is merged.
+## Checks and handoff
 
+- Base commit: `22cb24b`. Review branch: `almaz/tagging-v1`, targeting main.
+- Tests: `python3 -m unittest discover -s tests -p 'test_tagging.py' -v`.
+  The recorded test run used the existing `/opt/homebrew/bin/python3` directly;
+  all 14 passed. The test command does not need the match data.
+- `git diff --check` passed.
+- The output uses Python lists. Belek and Isken can use `np.asarray` if their
+  code expects NumPy arrays. Details and examples are in TAGGING.md.
+- The local XML run succeeded, but integration with the state machine and
+  possession accuracy have not been checked.
+
+Update this file with the code at each handoff. Keep actual XML contents and
+match outputs out of this file, Git, and hosted AI chats.

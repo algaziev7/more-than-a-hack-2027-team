@@ -1,104 +1,141 @@
-# Shared interfaces — proposed version 1
+# How the team's modules pass data to each other
 
-Agree on this at the first session; E1 implements the types. These APIs do not
-exist yet. Changes require a short PR note and review by affected consumers.
+This is the agreed starting format to review together. Most functions below are
+still planned. Almaz's tagging helper already works; its usage is explained in
+[TAGGING.md](TAGGING.md).
 
-## Conventions
+Before changing a shared field or function, tell the people who use it and ask
+for their review. Azamat owns the shared data types.
 
-- N is the frame count; full tactical input has N=199319. Synthetic tests may use
-  small N. Frames are strictly ordered 0..N-1. Every output has the same row axis.
-- Time is seconds, speed m/s. Keep normalised coordinates for homography and
-  metre coordinates for distances, explicitly named. Use games.py pitch size.
-- Preserve NaN for missing positions and separate validity masks. Never use zero
-  to mean a missing location. Distinguish imputed from observed positions.
-- Slot membership identifies a team, not a persistent player identity.
-- Events use [start_frame, end_frame) intervals after clipping to [0,N]. Convert
-  time with the documented rounding convention and test endpoints explicitly.
-- H/A/D are inference states. X is an output abstention, not a fourth possession
-  state. Official masks determine excluded video regions; reset each half.
-- All functions return new outputs without mutating shared inputs. Configurations
-  are explicit, serialisable, versioned, and do not include local absolute paths.
+## Rules everyone follows
 
-## Data owner output
+- `N` means the number of video frames. For the full tactical video, N is 199319.
+  Tests can use a smaller number.
+- Every list or array uses the same frame order: 0, 1, 2, ... N-1. Entry 100 always
+  describes tactical frame 100.
+- Use seconds for time and metres for distances. Pitch coordinates used with
+  homography stay in the 0–1 range. Name fields clearly so units are not mixed.
+- Keep missing positions as `NaN`. A separate true/false field says whether a
+  position was observed. Do not replace a missing position with (0,0).
+- A track slot belongs to a team, but may not follow the same player throughout
+  the match.
+- An event includes its start frame and excludes its end frame. Start 2, end 5
+  means frames 2, 3, and 4. Remove any part outside the video.
+- H and A mean live possession; D means play stopped. X means no answer.
+  Process the two halves separately.
+- Functions should not change their input data. Settings should be easy to save
+  with a run. Keep each laptop's private file paths outside shared settings.
 
-`load_match(data_dir, config) -> MatchData`
+## Azamat: load the data
 
-| Field | Shape / meaning |
+Planned function: `load_match(data_dir, config) -> MatchData`.
+
+In the table, `[N,2]` means N rows with two values per row. `[N,P,2]` means
+positions for P track slots in each of N frames. `bool` means true or false.
+
+| Field | Format and meaning |
 |---|---|
-| frame | int64 [N], exact ordered video frames |
-| half | int8 [N], 0 excluded, 1 first half, 2 second half |
-| fps, pitch_m | scalar fps, (length,width) |
-| ball_xy_m | float [N,2], NaN when unavailable |
-| ball_observed | bool [N] |
-| players_xy_m | float [N,P,2], NaN where unavailable |
-| player_observed | bool [N,P] |
-| slot_team | [P], H or A; reject unknown mapping |
-| ball_speed_mps | optional float [N], with source and validity documented |
-| events | list of frame intervals, code, original tag dictionary |
-| metadata | schema version and source identifiers; local provenance kept private |
+| frame | int64 [N]: frame numbers in order |
+| half | int8 [N]: 0 outside graded play, 1 first half, 2 second half |
+| fps, pitch_m | Frames per second; pitch length and width in metres |
+| ball_xy_m | float [N,2]: ball x/y position, or NaN if missing |
+| ball_observed | bool [N]: whether the ball position was observed |
+| players_xy_m | float [N,P,2]: player x/y positions, with NaN for missing values |
+| player_observed | bool [N,P]: whether each slot has an observed position |
+| slot_team | [P]: H or A for each slot; unknown mappings cause an error |
+| ball_speed_mps | Optional float [N]: speed, with source and validity explained |
+| events | Event dictionaries with frame times, code, and tags |
+| metadata | Format version and source information; private run details stay local |
 
-Use the starter loaders or a tested raw parser. Optional homography/video access
-must not force every consumer to decode video. Do not expose GT through this API.
+Reuse the starter loaders where useful. Loading tracking should not require
+reading videos. Do not include the answer file in this input.
 
-## Feature owner output
+## Beks: calculate clues from tracking
 
-`build_features(match, config) -> FeatureData`
+Planned function: `build_features(match, config) -> FeatureData`.
 
-FeatureData carries `frame`, named [N] arrays, a validity mask for each feature,
-`team_evidence` float [N,2] ordered H,A, and `team_reliability` float [N].
+Return frame numbers, named feature arrays, and a true/false validity array for
+each feature. Start with distances to nearby players, distance advantage, ball
+speed, movement reliability, missing-ball duration, nearby player counts, and
+distance to pitch boundaries. Explain each feature's units and missing values.
 
-Initial features: distance to each team's nearest player, next-nearest distance,
-distance advantage, ball speed, ball-speed validity, ball missing duration,
-motion reliability, local density, and boundary proximity. Additional features
-must document units and missing-value behavior.
+Also return:
 
-Evidence is a bounded heuristic, not a claim of calibrated probability. H/A
-entries are finite, nonnegative, sum to one. No team evidence => [0.5,0.5] with
-reliability 0. Reliability lies in [0,1]. E2 alone owns temporal possession state.
-
-## Dead-ball/tag owner output
-
-`build_priors(match, features, config) -> PriorData`
-
-| Field | Shape / meaning |
+| Field | Meaning |
 |---|---|
-| dead_evidence | float [N], [0,1], larger means stronger dead-ball evidence |
-| dead_reliability | float [N], [0,1]; 0 means no useful signal |
-| restart_evidence | float [N], [0,1], not a guaranteed exact restart timestamp |
-| tag_team_evidence | float [N,2], H/A conditional on live play |
-| tag_team_reliability | float [N], [0,1] |
-| diagnostic_flags | local reason codes; not private data in committed docs |
+| team_evidence | float [N,2]: team hints in H,A order; each pair adds to 1 |
+| team_reliability | float [N]: weight from 0 to 1; zero means ignore the hint |
 
-No dead-ball evidence => 0.5 with reliability 0. Unknown team => [0.5,0.5] with
-reliability 0. A throw-in can have restart evidence while its team reliability
-is zero. Overlapping tags require a documented conflict policy. Do not count
-multiple correlated tags as independent votes.
+With no useful team evidence, return `(0.5,0.5)` and weight 0. These are clues,
+not measured probabilities. Belek and Isken decide when possession changes;
+features should not maintain a separate possession state.
 
-## State owner output
+## Almaz: clues from tags and stoppages
 
-`decode(match, features, priors, config) -> Prediction`
+Available now:
 
-Prediction contains labels [N] in H/A/D/X and optional local diagnostics (state
-confidence, transition reasons, candidate boundaries). H/A evidence, stop evidence,
-and restart evidence enter one explicitly documented fusion policy. Neutral or
-unreliable inputs cannot silently become confident predictions.
+```python
+from possession.tagging import load_tagging_signals, build_tagging_signals
 
-Process halves independently. Write X outside the published graded intervals.
-Do not carry the first half's state across halftime. Within a half, document how
-initial uncertainty and long missing stretches are handled; do not infer D from
-absence alone. Keep all thresholds in the configuration and express durations
-in seconds before converting to frames.
+# Read the local XML once:
+signals = load_tagging_signals()
 
-## Integration and CLI
+# Or, if events are already loaded, use this instead:
+# signals = build_tagging_signals(events, n_frames=199319)
+```
 
-E5: `predict_match(data_dir, config) -> Prediction` composes loader, features,
-priors, and decoding. E1: `write_submission(prediction, path)` writes exact
-`frame,label` CSV rows in UTF-8 with stable newlines, no extra index, no blanks.
+The fields below plus `frame` are returned as ordinary Python lists. Team hints
+are pairs ordered H,A. No extra package is needed. NumPy users can convert each
+list with `np.asarray`. See [TAGGING.md](TAGGING.md) for the steps Belek and Isken
+should follow.
 
-E1's CLI loads configuration and calls E5's pipeline, then E1's exporter. E4's
-checker invokes the official validator. The prediction package must not import
-or load public GT. Scoring is a separate explicit operation with a recorded purpose.
+The later combined function is still planned:
+`build_priors(match, features, config) -> PriorData`.
+It will also use Beks's movement features to help detect stoppages.
 
-Every owner contributes one small synthetic input/output example and tests
-invalid shapes, masks, units, or label ordering relevant to their module. E5
-checks the composed pipeline against those examples before any full-data run.
+| Field | Meaning |
+|---|---|
+| dead_evidence | float [N]: 0–1 clue about stopped play; 0.5 means neutral |
+| dead_reliability | float [N]: weight from 0 to 1; zero means ignore it |
+| restart_evidence | float [N]: 0–1 clue that a restart happens around this time |
+| tag_team_evidence | float [N,2]: team hints in H,A order |
+| tag_team_reliability | float [N]: weight from 0 to 1 for the team hint |
+| diagnostic_flags | [N]: codes to help explain conflicts or missing information |
+
+For now, `dead_evidence` is always 0.5 and `dead_reliability` is always 0:
+actual stoppage detection is not implemented. An unknown team gives `(0.5,0.5)`
+with weight 0. A throw-in can provide a restart clue without naming a team.
+
+Repeated tags must not make a clue stronger. Opposing attacking hints cancel
+where they overlap. A restart tag does not identify the exact restart frame.
+
+## Belek and Isken: decide possession
+
+Planned function: `decode(match, features, priors, config) -> Prediction`.
+
+Read Beks's features and Almaz's clues for each frame. Combine their weights
+with the state machine's rules to produce one label per frame: H, A, D, or X.
+Document how you combine the clues and why you accept a change of possession.
+Optional debug output can explain the decisions.
+
+Reset at each half. Write X outside the published graded intervals. Do not carry
+the first half's possessor into the second half. Missing information alone must
+not imply stopped play. Keep time thresholds in seconds and convert using fps.
+
+## Goblin and Azamat: run everything and write the CSV
+
+Planned functions:
+
+- Goblin's `predict_match(data_dir, config)` connects loading, features, clues,
+  and the state machine.
+- Azamat's `write_submission(prediction, path)` writes the exact `frame,label`
+  CSV with all frames in order, no extra columns, and no empty labels.
+- Azamat's command loads the settings, runs the pipeline, and saves the CSV.
+- Beks's check calls the official submission validator.
+
+Prediction code must not read the public answer file. Scoring is a separate
+step used only as allowed by the competition rules.
+
+Each owner provides a small invented example and tests for their module.
+Goblin connects these examples first so problems can be found before running
+the full match.

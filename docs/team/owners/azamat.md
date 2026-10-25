@@ -6,7 +6,7 @@
 - Reviewer: E5
 - Owned files: possession/contracts.py; possession/data.py; possession/export.py; scripts/predict.py; environment files
 - Current milestone: contracts/fixtures delivered; loader, cache, export and invocation ready for integration
-- Last update: 2026-10-24
+- Last update: 2026-10-25
 
 ## Completed and verified
 
@@ -28,9 +28,15 @@
   reports go to ignored `.local/`; caches to `artifacts/`.
 - Added setup/reproduction instructions in `docs/team/SETUP.md` and concrete
   constructor notes in `INTERFACES.md`. Organiser code/baselines are unchanged.
+- Corrected an overly strict raw-parser assumption after the user's local
+  setup run failed: absent coordinates can coexist with a numeric speed field.
+  Canonical position/speed remain NaN and observation masks remain false for
+  such tracks. Added invented regression cases, including a cache round trip.
 
 ## Next exact action
 
+Rerun `scripts/check_setup.py --check-data --data-dir ./data` locally after
+the missing-position/speed fix. A successful full-data run is not yet confirmed.
 Have E2/E3/E4/E5 review the concrete constructor fields and consume the shared
 fixtures. Run the local commands in SETUP.md on each laptop: bundle validation,
 optional video/inventory checks, and baseline regeneration into ignored runs/.
@@ -40,8 +46,10 @@ E5 can now wire its pipeline; E1 will review it and verify byte-for-byte export.
 
 - E5's `possession/pipeline.py` is not present on this branch; actual prediction
   exits explicitly with no output until that module is integrated.
-- Restricted assets were not opened or processed in this AI session. Bundle
-  location/completeness, real metadata compatibility, video decode count,
+- The user ran the real-data check locally and reported the parser error
+  `missing ATD position must not carry speed`. The fix was reproduced and
+  verified with invented inputs only; no restricted tracking rows were exposed
+  to the assistant. Full-data compatibility after the fix, video decode count,
   baseline regeneration, and full-data runtime remain unverified.
 - All-laptop installation, collaborator access and second-laptop reproduction
   are not confirmed. Only macOS arm64 / Python 3.12.12 was exercised.
@@ -52,9 +60,10 @@ E5 can now wire its pipeline; E1 will review it and verify byte-for-byte export.
 
 - Changed files / behavior: E1 modules, invocation/setup scripts, synthetic
   tests/examples, pinned environment and setup docs listed above.
-- Base commit: `22cb24b`; implementation and this handoff travel together on
-  `e1/data-contract`. Branch progress is not yet accepted on main.
-- `.venv/bin/python -m unittest discover -s tests -v`: **36 tests passed**.
+- Initial implementation: `91b5157`, [draft PR #2](https://github.com/algaziev7/more-than-a-hack-2027-team/pull/2).
+  The parser fix and this handoff travel together on `e1/data-contract`.
+  Branch progress is not yet accepted on main.
+- `.venv/bin/python -m unittest discover -s tests -v`: **38 tests passed**.
 - `.venv/bin/python scripts/check_setup.py`: contract examples, identical
   full-length synthetic CSV bytes and official submission validation passed.
 - `.venv/bin/python -m pip check`: no broken requirements.
@@ -70,6 +79,9 @@ E5 can now wire its pipeline; E1 will review it and verify byte-for-byte export.
   `labels`/`diagnostics`. Events remain starter-compatible dictionaries.
 - Decision: stdlib raw parsing plus NumPy keeps kloppy/video/GPU optional. The
   CLI fails clearly for absent E5 integration rather than inventing a model.
+- Parser-fix decision: ignore numeric raw speed placeholders when both
+  coordinates are absent. Keep normal speed validation for observed positions,
+  the existing public contracts, and cache invalidation by loader source hash.
 - Help needed: E2/E3/E4 review contracts; E5 consumes contracts and adds pipeline;
   human teammates execute restricted-data checks locally without sharing extracts.
 

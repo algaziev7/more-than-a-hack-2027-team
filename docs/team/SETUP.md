@@ -96,8 +96,12 @@ the graded pre-kickoff portion of the second half; the loader assigns no
 possession state. Normalized coordinates are scaled by `games.py` pitch size.
 Positions beyond the pitch are retained. Missing positions remain NaN pairs;
 zero is a valid observation. No interpolation or imputation is performed.
-`ball_speed_mps` preserves the ATD third field in m/s; `np.isfinite` is its
-validity mask. Missing speed may coexist with an observed ball position.
+`ball_speed_mps` uses the ATD third field in m/s only when the ball position is
+observed; `np.isfinite` is its validity mask. Raw speed placeholders may exist
+even when coordinates are missing. Those speeds are masked to NaN so they do
+not become observed motion evidence. Missing speed may coexist with an observed
+ball position. Missing player positions likewise do not require a missing raw
+speed field.
 
 Events retain original code/tag strings and overlaps. Seconds use
 `round(seconds * fps)`, including ties to even. Intervals are clipped to

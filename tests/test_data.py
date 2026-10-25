@@ -62,6 +62,33 @@ class DataTests(unittest.TestCase):
         self.assertEqual(speed[0], 4.)
         self.assertTrue(np.isnan(speed[3]))
 
+    def test_missing_coordinates_ignore_numeric_speed_placeholders(self):
+        # Invented inputs: speed need not be absent when a track is missing.
+        for placeholder in ('0', '2.5', '-1', 'inf', 'NaN'):
+            self.write_rows([
+                ROWS[0],
+                f'2:0.1,0.2,1;NaN,NaN,{placeholder}:NaN,NaN,{placeholder}',
+                *ROWS[2:],
+            ])
+            with self.subTest(placeholder=placeholder):
+                ball, players, speed = read_tracking(self.raw, self.teams, 4, (105.3, 68.))
+                self.assertTrue(np.isnan(ball[1]).all())
+                self.assertTrue(np.isnan(players[1, 1]).all())
+                self.assertTrue(np.isnan(speed[1]))
+                self.assertEqual(speed[0], 4.)
+
+    def test_missing_position_speed_is_masked_in_match_and_cache(self):
+        self.write_rows([ROWS[0], '2:0.1,0.2,1;NaN,NaN,0:NaN,NaN,3', *ROWS[2:]])
+        config = {'data': {'cache': True}}
+        match = self.load_small(config)
+        with patch('possession.data.read_tracking', side_effect=AssertionError('cache miss')):
+            cached = self.load_small(config)
+        for loaded in (match, cached):
+            self.assertFalse(loaded.ball_observed[1])
+            self.assertFalse(loaded.player_observed[1, 1])
+            self.assertTrue(np.isnan(loaded.ball_speed_mps[1]))
+            self.assertEqual(loaded.ball_speed_mps[0], 4.)
+
     def test_every_id_is_checked_including_middle_order_and_duplicates(self):
         for ids in ([1, 3, 2, 4], [1, 2, 2, 4], [0, 1, 2, 3], [1, 2, 4, 5]):
             self.write_rows([str(i) + row[row.index(':'):] for i, row in zip(ids, ROWS)])
@@ -76,7 +103,7 @@ class DataTests(unittest.TestCase):
 
     def test_malformed_observations_fail_without_leaking_rows(self):
         for ball in ('NaN,0,0', '0,inf,0', '0,0,-1', '0,0,inf', 'secret,0,0',
-                     '0,0', 'NaN,NaN,1'):
+                     '0,0', 'NaN,NaN,secret'):
             self.write_rows([f'1:0,0,0;1,1,2:{ball}', *ROWS[1:]])
             with self.subTest(ball=ball), self.assertRaises(ValueError) as caught:
                 read_tracking(self.raw, self.teams, 4, (105.3, 68.))

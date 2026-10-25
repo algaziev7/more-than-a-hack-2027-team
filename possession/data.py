@@ -95,8 +95,8 @@ def _observation(group):
     except ValueError:
         raise ValueError("ATD observation has a nonnumeric field") from None
     if np.isnan(x) and np.isnan(y):
-        if not np.isnan(speed):
-            raise ValueError("missing ATD position must not carry speed")
+        # ATD may retain a filled/stale speed when the position is missing.
+        # Such a value cannot establish observed motion; mask it canonically.
         return np.nan, np.nan, np.nan
     if not np.isfinite([x, y]).all():
         raise ValueError("ATD position must be a finite pair or a NaN pair")
@@ -106,10 +106,12 @@ def _observation(group):
 
 
 def read_tracking(raw_path, slot_team, n_frames, pitch_m):
-    """Read every ID strictly in order. Return metres and raw ball speed (m/s).
+    """Read every ID strictly in order. Return metres and usable ball speed (m/s).
 
     Partial coordinates and malformed/truncated/duplicate/reordered records are
     errors. Coordinates outside the pitch are preserved, useful for stoppages.
+    Numeric speeds accompanying missing coordinate pairs are ignored; canonical
+    speed is NaN there, independent of the raw placeholder value.
     This function also accepts small frame counts for synthetic tests.
     """
     if type(n_frames) is not int or n_frames <= 0:
@@ -284,7 +286,7 @@ def load_match(data_dir=None, config=None, *, cache_dir=None):
         ball_speed_mps=speed, events=events,
         metadata={"schema_version": SCHEMA_VERSION, "game": GAME, "source": "tactical",
                   "asset_sha256": assets, "cache_key": key, "tags_available": bool(tags_available),
-                  "ball_speed_source": "raw ATD third field (m/s)",
+                  "ball_speed_source": "raw ATD third field (m/s), masked when position is missing",
                   "ball_speed_validity": "isfinite(ball_speed_mps)", "imputed": False},
     )
     if cache_path is not None:

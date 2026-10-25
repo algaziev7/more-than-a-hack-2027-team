@@ -4,6 +4,12 @@ This branch implements data infrastructure. It does not contain a possession
 model or E5's integrated pipeline. The public five minutes are only a pipeline
 sanity check; do not use their scores for training, tuning, or model selection.
 
+Validation status (2026-10-25): Azamat reported that the real-data
+`--check-data` command passed after parser fix `cfc7fac`. This verifies basic
+tactical input loading on his laptop. Video decoding, the complete inventory,
+baseline regeneration, other laptops, and E5 prediction integration remain
+separate checks. The private report was not read by the assistant or committed.
+
 ## Environment and synthetic checks
 
 The verified environment is Python 3.12.12 on macOS arm64. Use Python 3.12 on

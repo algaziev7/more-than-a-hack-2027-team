@@ -143,6 +143,24 @@ class DataTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 read_events(self.tags, 4, 25)
 
+    def test_loaded_events_are_compatible_with_merged_tagging_and_prior_contract(self):
+        from possession.contracts import PriorData
+        from possession.tagging import build_tagging_signals
+
+        self.tags.write_text('''<root><instance><start>0.04</start><end>0.12</end>
+          <code>BUILD UP</code><label><group>Team</group><text>Barcelona</text></label>
+        </instance></root>''', encoding='utf-8')
+        match = self.load_small()
+        original = copy.deepcopy(match.events)
+        signals = build_tagging_signals(match.events, n_frames=len(match.frame))
+        priors = PriorData(**{name: np.asarray(getattr(signals, name)) for name in (
+            'dead_evidence', 'dead_reliability', 'restart_evidence',
+            'tag_team_evidence', 'tag_team_reliability', 'diagnostic_flags')})
+        np.testing.assert_array_equal(signals.frame, match.frame)
+        np.testing.assert_array_equal(priors.tag_team_evidence[1:3], [[1., 0.], [1., 0.]])
+        np.testing.assert_array_equal(priors.tag_team_reliability, [0., .5, .5, 0.])
+        self.assertEqual(match.events, original)
+
     def test_cache_hit_and_input_config_invalidation(self):
         config = {'data': {'cache': True}}
         first = self.load_small(config)

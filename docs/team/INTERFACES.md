@@ -1,9 +1,9 @@
 # How the team's modules pass data to each other
 
-Almaz's tagging helper is merged on main; its usage is explained in
-[TAGGING.md](TAGGING.md). E1's contracts, loader, exporter and CLI are implemented
-on `e1/data-contract` (PR #2), pending consumer review and merge. Feature building,
-combined priors, decoding and the integrated pipeline remain planned. See
+Almaz's original tagging helper and Azamat's contracts, loader, exporter, and CLI
+are merged on main. This branch adds a tagging adapter that returns Azamat's
+`PriorData`. Its usage is explained in [TAGGING.md](TAGGING.md). Feature building,
+motion-based stoppage detection, decoding, and the full pipeline remain planned. See
 [SETUP.md](SETUP.md) for concrete constructors and synthetic examples.
 
 Before changing a shared field or function, tell the people who use it and ask
@@ -30,7 +30,7 @@ for their review. Azamat owns the shared data types.
 
 ## Azamat: load the data
 
-Implemented on E1's branch: `load_match(data_dir, config) -> MatchData`.
+Merged on main: `load_match(data_dir, config) -> MatchData`.
 
 In the table, `[N,2]` means N rows with two values per row. `[N,P,2]` means
 positions for P track slots in each of N frames. `bool` means true or false.
@@ -76,22 +76,23 @@ features should not maintain a separate possession state.
 
 ## Almaz: clues from tags and stoppages
 
-Available now:
+Use this adapter after loading the match:
 
 ```python
-from possession.tagging import load_tagging_signals, build_tagging_signals
+from possession.tagging import build_tagging_priors
 
-# Read the local XML once:
-signals = load_tagging_signals()
-
-# Or, if events are already loaded, use this instead:
-# signals = build_tagging_signals(events, n_frames=199319)
+priors = build_tagging_priors(match.events, n_frames=len(match.frame))
 ```
 
-The fields below plus `frame` are returned as ordinary Python lists. Team hints
-are pairs ordered H,A. No extra package is needed. NumPy users can convert each
-list with `np.asarray`. See [TAGGING.md](TAGGING.md) for the steps Belek and Isken
-should follow.
+`match` is Azamat's `MatchData`. The adapter returns his actual `PriorData`
+type, with NumPy arrays ready for Belek and Isken. It preserves every clue and
+flag. It checks frame order and uses the shared constructor to check shapes,
+lengths, values, and neutral clues. Each result has its own copies of the data.
+
+The original `load_tagging_signals()` and `build_tagging_signals()` still return
+Python lists and work without NumPy. If you already have those signals, call
+`to_prior_data(signals)` to convert them. Only the adapter needs the NumPy
+dependency already used by Azamat's code. See [TAGGING.md](TAGGING.md).
 
 The later combined function is still planned:
 `build_priors(match, features, config) -> PriorData`.
@@ -106,8 +107,9 @@ It will also use Beks's movement features to help detect stoppages.
 | tag_team_reliability | float [N]: weight from 0 to 1 for the team hint |
 | diagnostic_flags | Optional integer [N] array: codes or bit flags for conflicts or missing information |
 
-The E1 `PriorData` constructor defaults `diagnostic_flags` to None. Convert
-Almaz's list outputs to NumPy arrays when constructing the shared contracts.
+`PriorData` has no frame field. Use `match.frame` for frame numbers. The adapter
+passes all diagnostic flags as an integer array; the shared constructor also
+allows None for other modules that do not provide flags.
 
 For now, `dead_evidence` is always 0.5 and `dead_reliability` is always 0:
 actual stoppage detection is not implemented. An unknown team gives `(0.5,0.5)`

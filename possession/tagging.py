@@ -1,6 +1,7 @@
 """Convert automatic event intervals into evidence, never final possession labels.
 
-Uses only the standard library. Inputs use the dictionaries returned by
+The list-based helpers use only the standard library; the PriorData adapters
+use the team's existing NumPy dependency. Inputs use dictionaries returned by
 starter.load_smart_tagging.load. All intervals are [start_frame, end_frame).
 See docs/team/TAGGING.md for the state-machine integration contract.
 """
@@ -10,7 +11,10 @@ from dataclasses import dataclass
 import math
 from numbers import Real
 import operator
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from possession.contracts import PriorData
 
 
 # Conservative allowlist: ambiguous/defensive phases and goals are left neutral.
@@ -182,3 +186,59 @@ def load_tagging_signals(data_dir=None, game=None, config=None) -> TaggingSignal
         n_frames=source_frames(game=game),
         config=config,
     )
+
+
+def to_prior_data(signals: TaggingSignals) -> "PriorData":
+    """Copy tagging lists into Azamat's validated NumPy-based PriorData.
+
+    NumPy is imported only when this adapter is called. The original signal
+    builders keep working with the standard library alone. No clue is reweighted
+    or filtered, and no input is changed. The decoder still handles half masks.
+    """
+    import numpy as np
+    from possession.contracts import PriorData
+
+    if not isinstance(signals, TaggingSignals):
+        raise TypeError("signals must be a TaggingSignals")
+    n = len(signals.frame)
+    for index, frame in enumerate(signals.frame):
+        if _integer(frame, "frame") != index:
+            raise ValueError("frame must be exactly 0..N-1 in order")
+
+    # PriorData has no frame field and infers N from dead_evidence. Check that
+    # against the source timeline rather than accepting equally truncated lists.
+    if len(signals.dead_evidence) != n:
+        raise ValueError("dead_evidence length must match frame")
+
+    values = {
+        name: np.array(getattr(signals, name), dtype=np.float64, copy=True)
+        for name in ("dead_evidence", "dead_reliability", "restart_evidence",
+                     "tag_team_evidence", "tag_team_reliability")
+    }
+    if n == 0 and values["tag_team_evidence"].shape == (0,):
+        values["tag_team_evidence"] = values["tag_team_evidence"].reshape(0, 2)
+
+    # Do not silently turn fractional or boolean reason codes into integers.
+    flags = np.array(signals.diagnostic_flags, copy=True)
+    if n == 0 and flags.shape == (0,):
+        flags = np.empty(0, dtype=np.int64)
+    if flags.dtype.kind not in "iu":
+        raise ValueError("diagnostic_flags must contain integers")
+
+    # The shared constructor checks all lengths, shapes, values, and neutral
+    # evidence on frames whose reliability is zero.
+    return PriorData(**values, diagnostic_flags=flags)
+
+
+def build_tagging_priors(
+    events: Iterable[Dict],
+    n_frames: int,
+    config: Optional[TaggingConfig] = None,
+) -> "PriorData":
+    """Build tagging-only PriorData directly from already loaded events.
+
+    Use build_tagging_priors(match.events, len(match.frame)) after load_match.
+    Dead-ball evidence remains neutral; motion-based stoppage detection is
+    separate future work. Requires the existing team's NumPy dependency.
+    """
+    return to_prior_data(build_tagging_signals(events, n_frames, config))

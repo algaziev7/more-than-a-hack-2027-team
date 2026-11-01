@@ -138,6 +138,12 @@ directly. If tagging signals are already loaded as lists, use
 E5 still checks that all modules use the same frames, and that excluded frames
 receive X labels.
 
+The new stoppage-prior branch also offers
+`possession.dead_ball.build_priors(match, features=None, config=None)`. It keeps
+the tagging clues and adds conservative motion-based evidence in the same
+PriorData type. See [DEAD_BALL.md](DEAD_BALL.md) for rules, timing, and limits.
+It uses the existing locked dependencies and does not need video or new packages.
+
 ## Configuration, cache, export and invocation
 
 `configs/input-v1.json` is an input-layer example, **not a final model config**.

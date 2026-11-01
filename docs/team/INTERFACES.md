@@ -1,9 +1,9 @@
 # How the team's modules pass data to each other
 
-Almaz's original tagging helper and Azamat's contracts, loader, exporter, and CLI
-are merged on main. This branch adds a tagging adapter that returns Azamat's
-`PriorData`. Its usage is explained in [TAGGING.md](TAGGING.md). Feature building,
-motion-based stoppage detection, decoding, and the full pipeline remain planned. See
+Almaz's tagging helper and adapter, plus Azamat's contracts, loader, exporter,
+and CLI are merged on main. This branch adds motion-based stopped/live-play
+clues in `possession/dead_ball.py`; see [DEAD_BALL.md](DEAD_BALL.md).
+Feature building, decoding, and the full pipeline remain planned. See
 [SETUP.md](SETUP.md) for concrete constructors and synthetic examples.
 
 Before changing a shared field or function, tell the people who use it and ask
@@ -94,9 +94,18 @@ Python lists and work without NumPy. If you already have those signals, call
 `to_prior_data(signals)` to convert them. Only the adapter needs the NumPy
 dependency already used by Azamat's code. See [TAGGING.md](TAGGING.md).
 
-The later combined function is still planned:
-`build_priors(match, features, config) -> PriorData`.
-It will also use Beks's movement features to help detect stoppages.
+The combined function is implemented on this branch:
+
+```python
+from possession.dead_ball import build_priors
+
+priors = build_priors(match, features=features, config=config)
+```
+
+`features` is optional; `build_priors(match)` works with Azamat's existing
+ball positions/speeds and event tags. If provided, FeatureData must use the
+same frames. Only its existing team evidence/reliability is consumed; no new
+feature-dictionary keys are required. The shared types are unchanged.
 
 | Field | Meaning |
 |---|---|
@@ -111,9 +120,19 @@ It will also use Beks's movement features to help detect stoppages.
 passes all diagnostic flags as an integer array; the shared constructor also
 allows None for other modules that do not provide flags.
 
-For now, `dead_evidence` is always 0.5 and `dead_reliability` is always 0:
-actual stoppage detection is not implemented. An unknown team gives `(0.5,0.5)`
-with weight 0. A throw-in can provide a restart clue without naming a team.
+In the combined function, `dead_evidence=0.9` supports stopped play and 0.1
+supports live play, with default weight 0.5. No opinion remains 0.5 with weight
+0. These are untuned strengths, not measured probabilities. Tagging-only helpers
+still return neutral dead-ball fields. Unknown teams remain `(0.5,0.5)` with
+weight 0; a throw-in can provide a restart clue without naming a team.
+
+Stop support needs sustained slow observations plus a set-piece window or an
+outside-pitch position. Live support needs sustained in-pitch motion plus recent
+stop context or reliable team-control evidence. One stronger restart pulse can
+follow each confirmed stop. Missing observations and half changes reset history;
+excluded frames are neutral. Confirmation already adds a delay, so E2 should
+account for it before adding further persistence. Details and reason bits are
+in [DEAD_BALL.md](DEAD_BALL.md). Review these semantics with E2/E4 before merging.
 
 Repeated tags must not make a clue stronger. Opposing attacking hints cancel
 where they overlap. A restart tag does not identify the exact restart frame.

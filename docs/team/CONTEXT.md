@@ -1,69 +1,65 @@
 # Project context
 
-Updated: 2026-10-26.
+Updated: 2026-11-01.
 
 ## What is merged
 
-- The team repository is https://github.com/algaziev7/more-than-a-hack-2027-team.
-  `origin` points there; `upstream` points to the organiser repository.
-- PR #1 added Almaz's list-based tagging signals and 14 synthetic tests.
-- PR #2 added Azamat's shared types, data loader, CSV exporter, setup checks,
-  dependency lock, and prediction command. The command needs the future
-  pipeline before it can produce predictions.
-- Azamat reported a successful local data-loading check. Almaz reported that
-  his original tagging helper produced 199,319 frames. These are user-reported
-  execution checks, not measured possession accuracy.
-- The original scorer, submission validator, public five-minute answer file,
-  and baseline files are unchanged.
+- Team repo: https://github.com/algaziev7/more-than-a-hack-2027-team.
+  origin is the team repo; upstream is the organiser repo.
+- PR #1: Almaz's event-tag clues and synthetic tests.
+- PR #2: Azamat's loader, shared types, export, setup, and invocation code.
+- PR #3: Belek and Isken's validation plan. This is documentation; the state
+  machine itself is not in this checkout.
+- PR #4: Almaz's tagging adapter returns Azamat's PriorData format.
+- Azamat and Almaz reported successful local data-loading runs. Those confirm
+  execution, not possession accuracy. No private outputs were read here.
+- The official scorer, validator, public answer file, and baselines are unchanged.
 
-## Current branch work — not merged
+## Current branch — not merged
 
-`almaz/tagging-adapter` adds a direct connection between Almaz's tagging lists
-and Azamat's `PriorData`. The call is:
+`almaz/dead-ball-priors` adds `possession.dead_ball.build_priors(match, features,
+config)`. It returns tagging clues plus conservative stopped/live-play evidence
+and a motion-supported restart pulse. FeatureData is optional; no new shared
+fields or feature names are introduced.
 
-```python
-priors = build_tagging_priors(match.events, n_frames=len(match.frame))
-```
+The full synthetic suite passed 97 tests, including 33 new scenarios. Review,
+authorised local real-data execution, and integrated accuracy checks are still
+pending. Read [DEAD_BALL.md](DEAD_BALL.md) and [Almaz's handoff](owners/almaz.md).
 
-All 54 relevant synthetic tests passed. The adapter is ready for pull-request
-review and is not yet merged.
-Details are in [Almaz's handoff](owners/almaz.md) and [TAGGING.md](TAGGING.md).
+## Owners
 
-## Who owns each part
-
-| Owner | Work |
+| Person | Work |
 |---|---|
-| Azamat | Data, shared types, environment, and CSV export |
-| Belek and Isken | State machine and its tests |
-| Almaz | Event tags, restart clues, and later stoppage detection |
+| Azamat | Data, shared types, environment, and export |
+| Belek and Isken | Possession state machine and its tests |
+| Almaz | Event tags and stoppage/restart evidence |
 | Beks | Tracking features and evaluation |
-| Goblin agents | Pipeline integration and docs, reviewed by Azamat |
+| Goblin agents | Integration and docs; Azamat reviews |
 
-Everyone uses their own laptop and task branch in one shared repository.
-Each owner updates their own handoff. Do not treat work on a task branch as
-merged work. Confirm other owners' current progress before taking over files.
+One shared repo, separate laptop clones and task branches. Each owner maintains
+their handoff. A branch implementation is not integrated until reviewed/merged.
 
-## What remains
+## Remaining work
 
-- Review and connect the tagging adapter.
-- Build and connect tracking features, actual stoppage detection, the state
-  machine, and the full prediction pipeline. Those modules are not present in
-  the checkout inspected for this update.
-- Run the complete pipeline locally, validate its exact CSV, and reproduce it
-  on a second laptop. No complete team prediction has been verified here.
-- Keep the technical document up to date as the method changes.
+- Review the stoppage module and connect its evidence to the state machine.
+- Add Beks's features, the state machine, and the complete pipeline. These are
+  not present on main inspected for this update. Check teammates' latest work
+  before editing their files.
+- Run the complete system, validate its CSV, and reproduce it on another laptop.
+  No complete team prediction or measured accuracy improvement is established.
+- Keep the technical document aligned with the implemented method.
 
 ## Task and rules
 
-Output 199,319 tactical-frame labels: H for Barcelona, A for Athletic, D for
-stopped play, X for no answer. Official ranking uses spellF1. Submit a CSV,
-a public reproducible code repository, and a short technical document.
-The documented deadline is November 17, 2026; check organiser updates by email.
+Output 199,319 tactical-frame labels: H Barcelona, A Athletic, D stopped play,
+X no answer. Ranking uses spellF1. Submit a CSV, public reproducible repository,
+and short technical document. Documented deadline: November 17, 2026; check
+organiser updates through the registration channel.
 
-The public five minutes are only for pipeline checks, never for training,
-tuning, or model selection. Use synthetic inputs in hosted AI sessions. Actual
-match assets, extracts, and generated private arrays stay local and out of Git.
-Each person sets their own MTAH_DATA_DIR. No shared document needs that path.
+The public five-minute answer file is for pipeline checks, never training,
+tuning, or model selection. Hosted AI/CI use synthetic inputs. Actual assets,
+extracts, private arrays, and detailed reports stay local and outside Git.
+Each person sets MTAH_DATA_DIR locally.
 
-Read TEAM_PLAN.md for responsibilities, INTERFACES.md for field names,
-WORKFLOW.md for branches and handoffs, and SETUP.md for the team environment.
+Read TEAM_PLAN.md for ownership, INTERFACES.md for shared fields, WORKFLOW.md
+for branches/handoffs, and SETUP.md for the team environment.

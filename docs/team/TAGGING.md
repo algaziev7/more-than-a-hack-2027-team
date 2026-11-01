@@ -4,13 +4,14 @@ Almaz's code turns event tags into clues for every video frame. It gives a
 possible team, a weight for that clue, and a possible restart around that time.
 Belek and Isken combine these with Beks's tracking features to decide possession.
 
-The original tagging code and Azamat's data loader are merged. The adapter
-explained here is new work on `almaz/tagging-adapter`; it still needs review
-and merge before everyone uses it from main.
+The tagging code, adapter, and Azamat's loader are merged. This guide describes
+the tagging-only path, which leaves dead-ball fields neutral. The new
+`almaz/dead-ball-priors` branch adds movement-based clues through a separate
+function; see [DEAD_BALL.md](DEAD_BALL.md).
 
 ## 1. Recommended: use events that Azamat already loaded
 
-Once this branch is available, use these calls in the pipeline:
+For tagging-only clues, use these calls in the pipeline:
 
 ```python
 from possession.data import load_match
@@ -93,15 +94,16 @@ agreed team environment; the adapter does not install anything.
   original signals, and changing the signals later does not change the arrays.
 - Supports an empty event list with neutral clues and a zero-frame test case.
 
-## What is still missing
+## Adding stopped-play evidence
 
-Actual stoppage detection is later work with Beks's movement features. For now,
-`priors.dead_evidence` is always 0.5 and `priors.dead_reliability` is always 0.
-That means there is no stopped-play clue from this module yet. The adapter does
-not add a new detector.
+The tagging-only helpers always return `dead_evidence=0.5` and
+`dead_reliability=0`. This means they provide no stopped-play opinion.
 
-The later function `build_priors(match, features, config)` is still planned.
-`build_tagging_priors()` only provides the current tagging clues in a shared format.
+The new branch implements `possession.dead_ball.build_priors(match, features,
+config)`, which adds motion-supported stopped/live-play clues. Features are
+optional. Review and integration are still pending; read
+[DEAD_BALL.md](DEAD_BALL.md) before using it. `build_tagging_priors()` retains
+its original tagging-only behavior.
 
 Belek and Isken still handle halftime, ungraded frames, and final labels.
 

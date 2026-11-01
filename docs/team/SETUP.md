@@ -131,9 +131,12 @@ prediction = synthetic_prediction()
 `FeatureData.features` and `.validity` are identically keyed dictionaries of
 float[N] arrays and bool[N] masks. `PriorData.diagnostic_flags`, when provided,
 is an integer[N] array. `Prediction.labels` is a one-dimensional numpy array
-containing only H/A/D/X, with optional `.diagnostics`. E5 must convert any
-list-based module outputs to these contracts, verify alignment across modules,
-and ensure excluded frames are X.
+containing only H/A/D/X, with optional `.diagnostics`. Almaz's new
+`build_tagging_priors(match.events, len(match.frame))` returns `PriorData`
+directly. If tagging signals are already loaded as lists, use
+`to_prior_data(signals)` from `possession.tagging`. See [TAGGING.md](TAGGING.md).
+E5 still checks that all modules use the same frames, and that excluded frames
+receive X labels.
 
 ## Configuration, cache, export and invocation
 

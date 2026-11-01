@@ -1,54 +1,69 @@
 # Project context
 
-Updated: 2026-10-23. Status: planning complete; team implementation not started.
+Updated: 2026-10-26.
 
-## Confirmed facts
+## What is merged
 
-- Five equally experienced engineers, separate laptops, AI-assisted development.
-- User reports having all match assets. Actual local bundle location is unresolved.
-- The downloaded README supplied by the user matches the
-  starter's data-layout instructions; it is not an asset manifest or proof that
-  the bundle is extracted. Expected tactical/broadcast directories were not in
-  that folder or its data/ child at the time of inspection.
-- This checkout's data/ contains its README only; MTAH_DATA_DIR was unset.
-- Private team repository created: https://github.com/algaziev7/more-than-a-hack-2027-team.
-  The team remote is origin; the organiser repository is preserved as upstream.
-  Collaborator access still needs to be configured using the members' GitHub usernames.
-  No prediction implementation or full-data execution has been performed.
-- Existing source includes loaders, baselines, official scorer, validator, and
-  five public minutes of GT. Public GT cannot be used to train/tune/select models.
-- Required output: 199319 tactical frames, H/A/D/X. Rank: spellF1. Deliverables:
-  CSV, public reproducible code, short technical document.
-- Repository deadline: 2026-11-17, subject to official organiser updates.
+- The team repository is https://github.com/algaziev7/more-than-a-hack-2027-team.
+  `origin` points there; `upstream` points to the organiser repository.
+- PR #1 added Almaz's list-based tagging signals and 14 synthetic tests.
+- PR #2 added Azamat's shared types, data loader, CSV exporter, setup checks,
+  dependency lock, and prediction command. The command needs the future
+  pipeline before it can produce predictions.
+- Azamat reported a successful local data-loading check. Almaz reported that
+  his original tagging helper produced 199,319 frames. These are user-reported
+  execution checks, not measured possession accuracy.
+- The original scorer, submission validator, public five-minute answer file,
+  and baseline files are unchanged.
 
-## Working decisions
+## Current branch work — not merged
 
-- One team repository; separate clones and short task branches.
-- E1: Azamat (data/infra). E2: Belek and Isken (state machine).
-  E3: Almaz (dead ball/tags). E4: Beks (features/evaluation).
-  E5: Goblin (AI agents for integration/docs), reviewed by Azamat.
-  Actual available hours remain unconfirmed.
-- First increment uses tactical tracking and tagging; video and broadcast are
-  optional extensions after a valid integrated submission exists.
-- Contracts and synthetic examples first; all five work concurrently.
-- Initial estimate: 32 focused hours per person; first integration by hour 12.
-- Each engineer owns their handoff; E5 updates this integrated context.
+`almaz/tagging-adapter` adds a direct connection between Almaz's tagging lists
+and Azamat's `PriorData`. The call is:
 
-## Current blockers / next actions
+```python
+priors = build_tagging_priors(match.events, n_frames=len(match.frame))
+```
 
-1. Confirm available hours and divide E2 tasks between Belek and Isken.
-2. Add team collaborators, clone the team repository, and start task branches.
-3. E1 locates the actual bundle root on each laptop and verifies local setup.
-4. Team agrees on INTERFACES.md; E1 creates contracts/fixtures.
-5. Start the first-hour tasks in TEAM_PLAN.md and integrate early.
+All 54 relevant synthetic tests passed. The adapter is ready for pull-request
+review and is not yet merged.
+Details are in [Almaz's handoff](owners/almaz.md) and [TAGGING.md](TAGGING.md).
 
-## Evidence and limitations
+## Who owns each part
 
-This plan is based on public repository docs/code and the requested downloaded
-README. Restricted match contents were not read. No new prediction code, score,
-performance improvement, environment lock, or reproducibility claim exists yet.
-All proposed module paths and team CLI commands still need implementation.
+| Owner | Work |
+|---|---|
+| Azamat | Data, shared types, environment, and CSV export |
+| Belek and Isken | State machine and its tests |
+| Almaz | Event tags, restart clues, and later stoppage detection |
+| Beks | Tracking features and evaluation |
+| Goblin agents | Pipeline integration and docs, reviewed by Azamat |
 
-For role details read TEAM_PLAN.md. For cross-laptop handoffs and AI startup read
-WORKFLOW.md. For interfaces read INTERFACES.md. Update this file only after
-reviewed integration, keeping branch-only progress in owners/*.md.
+Everyone uses their own laptop and task branch in one shared repository.
+Each owner updates their own handoff. Do not treat work on a task branch as
+merged work. Confirm other owners' current progress before taking over files.
+
+## What remains
+
+- Review and connect the tagging adapter.
+- Build and connect tracking features, actual stoppage detection, the state
+  machine, and the full prediction pipeline. Those modules are not present in
+  the checkout inspected for this update.
+- Run the complete pipeline locally, validate its exact CSV, and reproduce it
+  on a second laptop. No complete team prediction has been verified here.
+- Keep the technical document up to date as the method changes.
+
+## Task and rules
+
+Output 199,319 tactical-frame labels: H for Barcelona, A for Athletic, D for
+stopped play, X for no answer. Official ranking uses spellF1. Submit a CSV,
+a public reproducible code repository, and a short technical document.
+The documented deadline is November 17, 2026; check organiser updates by email.
+
+The public five minutes are only for pipeline checks, never for training,
+tuning, or model selection. Use synthetic inputs in hosted AI sessions. Actual
+match assets, extracts, and generated private arrays stay local and out of Git.
+Each person sets their own MTAH_DATA_DIR. No shared document needs that path.
+
+Read TEAM_PLAN.md for responsibilities, INTERFACES.md for field names,
+WORKFLOW.md for branches and handoffs, and SETUP.md for the team environment.

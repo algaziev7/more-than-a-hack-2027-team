@@ -109,21 +109,64 @@ called, by design. `team_dwell_s = 0.60` (15 frames) is a starting point, not a 
 worth revisiting once Decision 3's fix is in, since a dwell that tolerates gaps may not need to be
 as long to get the same flicker protection.
 
-## Dependency risk, not an E2 decision — raised for E3/Almaz
+## Dependency risk, raised for E3/Almaz — now resolved
 
 Our `D` calls are only as good as how much real dead-ball evidence E3 surfaces. Smart Tagging's
-`SET PIECES` code covers only 59 instances for a whole match's worth of stoppages; if
-`dead_reliability` stays near zero outside those tagged windows, long untagged dead stretches get
-silently absorbed into whichever team held the ball before. `TEAM_PLAN.md` already asks E3 for a
-broader motion-based signal, not just tagging, so this may already be covered — worth confirming
-rather than assuming.
+`SET PIECES` code covers only 59 instances for a whole match's worth of stoppages. Resolved by
+`almaz/dead-ball-priors` (merged to `main`): `possession/dead_ball.py` adds a motion-based signal
+(sustained low ball speed + a tag window or an outside-pitch position) on top of tagging, so
+`dead_reliability` is not limited to the 59 tagged instances. Still conservative by design (see
+`docs/team/DEAD_BALL.md`) — a stationary ball mid-pitch with no supporting tag still gets no
+opinion — but the dependency this decision flagged is real and is being worked, not silent.
+
+## Decision 5 — `dead_dwell_s` shortened once E3's own confirmation delay was known
+
+`docs/team/DEAD_BALL.md` and the updated `INTERFACES.md` state explicitly: *"Confirmation already
+adds a delay, so E2 should account for it before adding further persistence."* Almaz's
+`dead_ball.build_priors` already requires ~0.6s of sustained stillness (plus a supporting tag or
+an outside-pitch position) before it confirms a stop at all. Decision 4's original
+`dead_dwell_s = 0.32` (8 frames) would have stacked a second long wait on top of that for no
+benefit — exactly the mistake the docs are warning against. Shortened to `0.08s` (2 frames),
+kept only as a small margin against a single noisy frame of E3's signal, not as a second
+confirmation window. (`team_dwell_s` is untouched — tagging's team hints carry no such built-in
+confirmation delay, so our own dwell is still the only thing protecting the team decision.)
+
+## Integration findings once E1/E3's real modules landed on `main`
+
+Before any of this code existed independently, `main` gained real `possession/contracts.py`
+(Azamat), `possession/dead_ball.py` + `possession/tagging.py` (Almaz), with 97 passing tests.
+Rebasing onto that surfaced two real compatibility issues, both fixed:
+
+- **`Prediction` shape.** The real shared `possession.contracts.Prediction` is `labels` +
+  `diagnostics: dict`. An earlier draft of `decode()` returned a locally-defined `Prediction`
+  with a `transitions: List[Transition]` field instead — incompatible with what anything
+  downstream (Goblin's pipeline, a shared test) would expect. Fixed: `decode()` now imports and
+  returns the real `possession.contracts.Prediction`, with the transition log under
+  `diagnostics["transitions"]`.
+- **Config convention.** `dead_ball.DeadBallConfig` and `tagging.TaggingConfig` both take the
+  *whole* shared pipeline config dict and read only their own named section (e.g.
+  `config["dead_ball"]`). `decode()` originally took a `StateMachineConfig` instance directly,
+  which would have forced Goblin's pipeline to special-case this one stage. Fixed:
+  `decode(match, features, priors, config)` now reads `config["state_machine"]` the same way,
+  via a local `_section` helper mirroring `dead_ball._section`.
+
+Verified end to end against the real match (`possession.data.load_match` ->
+`possession.dead_ball.build_priors` -> `possession.state_machine.decode`, with a neutral
+placeholder in place of Beks's not-yet-built `features.py`): runs in ~15s total on all 199,319
+frames, produces a submission that passes `validate_submission.py`, and the `X` count matches the
+documented ungraded-frame count exactly. Scored against the public window purely as a plumbing
+check (never as a result): `spellF1` 0.0952 — far below the baseline, as expected, since without
+real tracking-based team evidence the only team signal available is Smart Tagging's sparse hints.
+This number is not informative about the real approach and should not be read as one.
 
 ## Explicitly deferred (not forgotten, not yet needed)
 
-- No vectorization of the per-frame loop — 199k frames is cheap in plain Python; revisit only if
-  it's measurably slow against real data.
-- No learned/HMM model — see above.
+- No vectorization of the per-frame loop — 199k frames is cheap in plain Python; confirmed at
+  0.03-0.04s against both synthetic and real-scale inputs.
+- No learned/HMM model — see Decision 2.
 - No mid-possession confidence-based abstention beyond the `half == 0` case — a plausible v2.
-- No `possession/contracts.py` / `features.py` / `tagging.py` — those stay E1's / E4's / E3's;
-  this module only reads the attribute names `INTERFACES.md` already promises (duck-typed), so it
-  doesn't block on them existing.
+- No `isinstance`/type-checking of `match`/`features`/`priors` against the real contracts (unlike
+  `dead_ball._validate_inputs`) — this module stays duck-typed on purpose so the lightweight
+  `SimpleNamespace` fixtures in `tests/test_state_machine.py` keep working unchanged; the real
+  contracts' own constructors already validate on construction, so a second check here would be
+  redundant for real callers and would break the synthetic ones for no benefit.

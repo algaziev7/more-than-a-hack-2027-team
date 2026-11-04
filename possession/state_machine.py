@@ -4,13 +4,15 @@ This is the temporal layer described in docs/team/INTERFACES.md ("State owner ou
 
     decode(match, features, priors, config) -> Prediction
 
-`match`, `features` and `priors` are duck-typed on purpose. E1's MatchData and E4's/E3's
-FeatureData/PriorData do not exist yet (see TEAM_PLAN.md), so this module only reads the
-attributes INTERFACES.md already promises will exist on them -- `match.frame`, `match.half`,
+`match`/`features`/`priors` are read duck-typed (`match.frame`, `match.half`,
 `features.team_evidence`, `features.team_reliability`, `priors.dead_evidence`,
 `priors.dead_reliability`, `priors.restart_evidence`, `priors.tag_team_evidence`,
-`priors.tag_team_reliability` -- rather than importing a concrete type. Any object exposing
-those (the real contracts, or a tests fixture) works unchanged.
+`priors.tag_team_reliability`) rather than type-checked against `possession.contracts`. Azamat's
+`MatchData`/`FeatureData` and Almaz's `PriorData` now exist and are the real types this is meant
+to consume (see `possession.data.load_match`, `possession.dead_ball.build_priors`), but this
+module doesn't import or isinstance-check them, so it also runs unchanged against the lighter
+`tests.fixtures`-style objects used in `tests/test_state_machine.py`. `Prediction` *is* imported
+from `possession.contracts`, since that return type is this module's own contract to satisfy.
 
 Design rationale, and the review that shaped it, are written up in full in
 docs/team/decisions/2026-10-23-e2-data-evidence-and-state-machine-design.md. Summary:
@@ -30,12 +32,25 @@ docs/team/decisions/2026-10-23-e2-data-evidence-and-state-machine-design.md. Sum
 - `X` is reserved for genuinely ungraded frames (`half == 0`). Every graded frame gets a concrete
   call, so spell boundaries stay well-defined. No ML, no vectorization yet -- see the decision
   doc's "explicitly deferred" list for why.
+- `dead_dwell_s` is deliberately short (Decision 5). Almaz's `possession.dead_ball.build_priors`
+  already waits ~0.6s of sustained stillness before it confirms a stop (see DEAD_BALL.md), and
+  INTERFACES.md says explicitly: "confirmation already adds a delay, so E2 should account for it
+  before adding further persistence." Stacking a second long dwell on top would double-delay
+  every dead-ball call for no benefit; a short one is still kept as a margin against a single
+  noisy frame, not as a second confirmation window.
+
+`config` follows the same convention as `dead_ball.DeadBallConfig` / `tagging.TaggingConfig`: the
+caller passes the *whole* shared pipeline dict, and this module reads only its own
+`config["state_machine"]` section, so Goblin's pipeline can pass one config object to every stage.
 """
 
-from dataclasses import dataclass, field
-from typing import List
+from dataclasses import dataclass, fields
+from numbers import Real
+import math
 
 import numpy as np
+
+from possession.contracts import Prediction
 
 # Params
 H, A, D, X = "H", "A", "D", "X"
@@ -52,7 +67,7 @@ class StateMachineConfig:
 
     # Hysteresis: occurrences (not necessarily consecutive, see Decision 3) a candidate needs
     # before the state actually switches.
-    dead_dwell_s: float = 0.32   # ~8 frames -- stoppages tend to be announced cleanly
+    dead_dwell_s: float = 0.08   # ~2 frames -- Almaz's prior already waits ~0.6s, see Decision 5
     team_dwell_s: float = 0.60   # ~15 frames -- a turnover should need more than a touch
 
     # Dead/alive decision.
@@ -64,6 +79,16 @@ class StateMachineConfig:
     team_margin_threshold: float = 0.15   # required |evidence[H] - evidence[A]| to be decisive
     team_reliability_min: float = 0.25    # combined reliability floor to trust that margin
 
+    def __post_init__(self):
+        for field_ in fields(self):
+            value = getattr(self, field_.name)
+            if isinstance(value, bool) or not isinstance(value, Real) or not math.isfinite(value):
+                raise ValueError("state_machine.{} must be a finite number".format(field_.name))
+        if self.fps <= 0:
+            raise ValueError("state_machine.fps must be positive")
+        if min(self.dead_dwell_s, self.team_dwell_s) <= 0:
+            raise ValueError("dwell durations must be positive")
+
     @property
     def dead_dwell_frames(self) -> int:
         return max(1, round(self.dead_dwell_s * self.fps))
@@ -73,22 +98,22 @@ class StateMachineConfig:
         return max(1, round(self.team_dwell_s * self.fps))
 
 
-@dataclass
-class Transition:
-    """One state change, for diagnostics and tests -- not part of the scored output."""
+def _section(config, name, cls):
+    """Pull this module's own section out of the shared pipeline config dict.
 
-    frame: int
-    from_state: str
-    to_state: str
-    reason: str
-
-
-@dataclass
-class Prediction:
-    """decode()'s return value. `labels` is the only field the scorer ever sees."""
-
-    labels: np.ndarray                       # object array of "H"/"A"/"D"/"X", shape [N]
-    transitions: List[Transition] = field(default_factory=list)
+    Mirrors possession.dead_ball._section / possession.tagging.TaggingConfig's convention: the
+    caller passes the whole pipeline dict, and each stage reads only its own named section, so
+    Goblin's pipeline can hand the same config object to every stage.
+    """
+    config = {} if config is None else config
+    if not isinstance(config, dict):
+        raise ValueError("config must be an object")
+    options = config.get(name, {})
+    if not isinstance(options, dict):
+        raise ValueError("{} settings must be an object".format(name))
+    if set(options) - {field_.name for field_ in fields(cls)}:
+        raise ValueError("unknown {} setting".format(name))
+    return cls(**options)
 
 
 def _combine(evidence_a, reliability_a, evidence_b, reliability_b):
@@ -140,20 +165,24 @@ def _decisive_state_per_frame(features, priors, config: StateMachineConfig) -> n
     return candidate
 
 
-def decode(match, features, priors, config: StateMachineConfig = None) -> Prediction:
+def decode(match, features, priors, config=None) -> Prediction:
     """The whole state machine. See the module docstring and the decision doc for the rationale.
 
     `match.half` is 0 for ungraded frames (before kickoff, halftime, after the final whistle),
     and the half number (1 or 2) otherwise -- the convention docs/team/INTERFACES.md specifies.
+
+    `config` is the shared pipeline dict (see `_section`), e.g. `{"state_machine": {...}}`, not a
+    `StateMachineConfig` directly -- matching how `dead_ball.build_priors` and
+    `tagging.build_tagging_priors` take `config`.
     """
-    config = config or StateMachineConfig()
+    settings = _section(config, "state_machine", StateMachineConfig)
     half = np.asarray(match.half)
     n = len(half)
 
-    candidate = _decisive_state_per_frame(features, priors, config)
+    candidate = _decisive_state_per_frame(features, priors, settings)
 
     labels = np.full(n, X, dtype=object)
-    transitions: List[Transition] = []
+    transitions = []
 
     current_state = D
     pending_state = None
@@ -194,16 +223,16 @@ def decode(match, features, priors, config: StateMachineConfig = None) -> Predic
         else:
             pending_state, pending_count = this_candidate, 1
 
-        required = config.dead_dwell_frames if this_candidate == D else config.team_dwell_frames
+        required = settings.dead_dwell_frames if this_candidate == D else settings.team_dwell_frames
         if pending_count >= required:
-            transitions.append(Transition(
-                frame=int(match.frame[i]) if hasattr(match, "frame") else i,
-                from_state=current_state, to_state=this_candidate,
-                reason="{} decisive occurrences for the new candidate".format(pending_count),
-            ))
+            transitions.append({
+                "frame": int(match.frame[i]) if hasattr(match, "frame") else i,
+                "from_state": current_state, "to_state": this_candidate,
+                "reason": "{} decisive occurrences for the new candidate".format(pending_count),
+            })
             current_state = this_candidate
             pending_state, pending_count = None, 0
 
         labels[i] = current_state
 
-    return Prediction(labels=labels, transitions=transitions)
+    return Prediction(labels=labels, diagnostics={"transitions": transitions})

@@ -15,9 +15,14 @@ from types import SimpleNamespace
 
 import numpy as np
 
+from possession.contracts import Prediction
 from possession.state_machine import A, D, H, X, StateMachineConfig, decode
+from tests.fixtures import neutral_features, neutral_priors, synthetic_match
 
-CONFIG = StateMachineConfig()  # fps=25 -> dead_dwell_frames=8, team_dwell_frames=15
+CONFIG = StateMachineConfig()  # fps=25 -> dead_dwell_frames=2, team_dwell_frames=15
+# decode() takes the shared pipeline config dict (see possession.state_machine._section), not a
+# StateMachineConfig directly. CONFIG's values are the defaults, so `None` behaves identically --
+# it's kept here purely to compute expected frame offsets (e.g. CONFIG.team_dwell_frames) below.
 
 
 def _match(n, half=1):
@@ -44,7 +49,7 @@ def _priors(n, dead=0.0, dead_rel=0.0, restart=0.0, tag_h=0.5, tag_rel=0.0):
     )
 
 
-def _run(match, features, priors, config=CONFIG):
+def _run(match, features, priors, config=None):
     return decode(match, features, priors, config).labels
 
 
@@ -192,7 +197,7 @@ class StateMachineTests(unittest.TestCase):
         features = _features(n, team_h=0.95, team_rel=0.9)  # strong home evidence throughout
         priors = _priors(n)
 
-        labels = decode(match, features, priors, CONFIG).labels
+        labels = decode(match, features, priors).labels
         self.assertTrue(np.all(labels[n1:n1 + gap] == X), "ungraded gap must stay X")
 
         second_half_start = n1 + gap
@@ -202,6 +207,33 @@ class StateMachineTests(unittest.TestCase):
             "second half must not inherit home possession or jump to it before its own dwell",
         )
         self.assertTrue(np.all(labels[warmup_end:] == H), "but should settle into H once earned")
+
+
+class RealContractsCompatibilityTests(unittest.TestCase):
+    """Decode against the team's actual shared fixtures (tests/fixtures.py), not just the
+    lightweight SimpleNamespace stand-ins above -- proves this returns a real
+    possession.contracts.Prediction and accepts real MatchData/FeatureData/PriorData, which the
+    stand-ins alone can't verify.
+    """
+
+    def test_decode_accepts_real_contract_types_and_returns_real_prediction(self):
+        match = synthetic_match()
+        features = neutral_features(match)
+        priors = neutral_priors(match)
+
+        result = decode(match, features, priors)
+
+        self.assertIsInstance(result, Prediction)
+        self.assertEqual(len(result.labels), len(match.frame))
+        self.assertTrue(np.all(result.labels[match.half == 0] == X), result.labels)
+        # No decisive evidence anywhere in this fixture -> stays on the D default, never X.
+        self.assertTrue(np.all(result.labels[match.half != 0] == D), result.labels)
+
+    def test_decode_rejects_unknown_config_key(self):
+        match = synthetic_match()
+        with self.assertRaises(ValueError):
+            decode(match, neutral_features(match), neutral_priors(match),
+                   {"state_machine": {"not_a_real_setting": 1}})
 
 
 if __name__ == "__main__":

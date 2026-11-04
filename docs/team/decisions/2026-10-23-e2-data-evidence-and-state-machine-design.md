@@ -68,17 +68,55 @@ the baseline's flicker in the first place.
 - Dead and team transitions get **separate dwell lengths** (dead shorter, team longer) — a
   stoppage is often announced cleanly by reliable tagging evidence; a turnover should need more
   sustained proof than a single touch.
-- **Every half starts in `D`**, never "carried over" or "unknown." Reason: the second half is
-  graded from frame 110,808 but doesn't kick off until 113,742 (FAQ.md) — ~2,934 genuinely dead
-  graded frames at the start of the half. Starting "unknown" and abstaining (`X`) there is a trap:
-  `spellF1` back-fills a leading run of `X` with the half's *first real decision*, which would be
-  the eventual kickoff team — exactly the wrong label for a dead stretch. Starting "alive" is
-  wrong for the obvious reason. Starting `D` sidesteps both without any half-start special-casing.
+- **Every half starts in `D`**, never "carried over" or "unknown." This is *correct* for the
+  second half, which is graded from frame 110,808 but doesn't kick off until 113,742 (FAQ.md) —
+  ~2,934 genuinely dead graded frames at the start of the half. It is only *harmless*, not
+  correct, for the first half, which is graded from the kickoff itself and so is live from frame
+  one (DATA.md) — `D` there is wrong for about one dwell window's worth of frames until evidence
+  pulls it to the real state, the same latency cost paid at every other transition (see the dwell
+  trade-off below). Worth stating plainly: the uniform default is a deliberate simplification that
+  avoids special-casing "is this the start of a half," not a claim that it's the right label in
+  both cases. Starting "unknown" and abstaining (`X`) would still be a trap either way: `spellF1`
+  back-fills a leading run of `X` with the half's *first real decision*, which for the second half
+  would be the eventual kickoff team — exactly the wrong label for a dead stretch.
 - `X` is reserved for genuinely ungraded frames (`half == 0`). Every graded frame gets a concrete
   call, so spell boundaries stay well-defined.
 - Deterministic and rule-based for v1, on purpose — `TEAM_PLAN.md` says start here; an HMM/learned
   model is an explicit, optional, later step, not a v1 requirement. There is also no legitimate
   training signal for one yet (only 5 minutes of real labels, reserved for pipeline checks).
+
+## Decision 3 — a "no decisive signal" frame pauses the dwell count, it does not reset it
+
+Found on review, before any code was written: an earlier version of this design reset the dwell
+counter on *any* frame that wasn't a clean match to the pending candidate, including a frame with
+no decisive signal at all (ball not visible, nothing reliable). That's a real problem given the
+ball is missing on 41% of graded frames, and in clusters (an occlusion lasts many consecutive
+frames), not as isolated single frames. A genuine turnover overlapping a missing-ball burst could
+have its dwell count reset every frame of that burst, pushing detection far later than the nominal
+dwell length — or, if gaps recur often enough, never reaching it at all.
+
+Fix: a frame with no decisive candidate leaves the pending count untouched (pause, not reset).
+Only a frame that actively supports staying in the current state, or supports a *different*
+competing candidate, resets progress toward the pending one. This needs its own synthetic test —
+a sustained turnover with missing-evidence frames scattered through it — alongside the nine
+already planned.
+
+## Decision 4 — the dwell length is a real, quantified cost, not a free safety margin
+
+`EVALUATION.md`'s own numbers: a transition called 8 frames late scores ~0.89 on that spell, 25
+frames (1s) late scores ~0.65. The dwell length is exactly how late every genuine transition gets
+called, by design. `team_dwell_s = 0.60` (15 frames) is a starting point, not a settled constant —
+worth revisiting once Decision 3's fix is in, since a dwell that tolerates gaps may not need to be
+as long to get the same flicker protection.
+
+## Dependency risk, not an E2 decision — raised for E3/Almaz
+
+Our `D` calls are only as good as how much real dead-ball evidence E3 surfaces. Smart Tagging's
+`SET PIECES` code covers only 59 instances for a whole match's worth of stoppages; if
+`dead_reliability` stays near zero outside those tagged windows, long untagged dead stretches get
+silently absorbed into whichever team held the ball before. `TEAM_PLAN.md` already asks E3 for a
+broader motion-based signal, not just tagging, so this may already be covered — worth confirming
+rather than assuming.
 
 ## Explicitly deferred (not forgotten, not yet needed)
 

@@ -1,57 +1,69 @@
 # Belek and Isken — Possession state machine
 
 - Owner: Belek and Isken
-- Status: two independent tracks in progress, by agreement (compare and reconcile later)
-- Branch: Belek on `e2/state-v1`; Isken on `e2/validation-plan`
+- Status: Belek's decoder in PR #6; Isken's validation/fixes built on that PR, review pending
+- Branch: Belek on `e2/state-v1`; Isken on `e2/isken-validation`
 - Reviewer: E4
 - Owned files: possession/state_machine.py; state-machine configuration and tests
-- Current milestone: first four focused hours
-- Last update: 2026-10-25
+- Current milestone: synthetic decoder validation and E3/export integration
+- Last update: 2026-11-08 (Isken's track)
 
 ## Pair coordination
 
-Belek and Isken agreed to build independent solutions on separate branches and compare them
-later, rather than merging work-in-progress into one track. This file records both tracks side
-by side until that comparison happens; neither section overwrites the other.
+The earlier plan was two independent implementations. Isken's current task is
+to validate and strengthen Belek's implemented decoder first. His follow-up is
+based on `c8258b6` from PR #6; it does not replace Belek's branch. E4 remains the
+behavior reviewer. Belek's historical handoff below is preserved; consult PR #6
+for his later contract-integration changes and reported local smoke test.
 
-## Isken's track (`e2/validation-plan`)
+## Isken's track (`e2/isken-validation`)
 
 ### Completed and verified
 
-Prepared [E2_VALIDATION_PLAN.md](../E2_VALIDATION_PLAN.md), covering the
-transition specification, synthetic/reference testing, metric semantics,
-environment and local-data setup, eligible external validation, and exact
-reproduction. The proposed pair split leaves E4 as the behavior/policy reviewer.
+The earlier validation plan is merged via PR #3. This follow-up implements its
+first synthetic validation increment; see the
+[2026-11-08 report](../experiments/2026-11-08-e2-synthetic-validation.md).
 
-Checked the requested docs and official source. Confirmed expected tactical
-tracking/tagging/homography filenames are present; the expected tactical video
-filename is absent. Presence checks only: no restricted contents were opened.
-Python 3.11 is available, but no project environment or team modules exist yet.
-No implementation, algorithm tests, scorer execution or full-data runs completed.
+- Added typed invented evidence fixtures, an independent offline run-group
+  reference, exhaustive checks over 5,461 short sequences, 200 seeded half/gap
+  cases, and 50 mixed-evidence team-swap checks.
+- Added long-gap, pending-cancellation, unknown-team restart, short-possession,
+  half-boundary, final-frame, deterministic-input, and timing tests.
+- Reproduced and fixed match-fps handling, fractional-dwell rounding, timeline
+  mismatch/broadcast acceptance, and out-of-range config values.
+- Measured default direct-evidence delays: turnover/restart +14 frames, stop
+  +1 frame at 25 fps. A 14-frame synthetic possession is missed entirely.
+- Connected E3 priors to decoding/export on invented geometry; checked exact
+  transitions, identical CSV bytes, and official format validation. Added
+  official-metric usage checks on invented labels only.
+- Full suite: **132 tests pass**, including **23 new tests**. Environment:
+  isolated Python 3.14.0/macOS arm64 with the existing pinned dependencies.
+  Dependency check and whitespace check pass. No restricted inputs were opened.
 
 ### Next exact action
 
-On each developer's task branch, agree the transition policy and smallest typed
-synthetic fixture with E1/E3/E4, then implement the first pass/turnover/stoppage/
-half-reset slice. Follow sessions 0–2 h and 2–5 h in the validation plan.
+Belek and Beks/E4 review the follow-up against PR #6. Decide whether pending
+support should expire, how to represent live play with an unknown team, and
+how short supported possessions should survive. Use the recorded timing cases
+as the baseline for a bounded backdating experiment after policy agreement.
+When E4 features exist, connect them to the synthetic integration slice.
 
 ### Handoff
 
-- Changed files: new validation plan and this E2 handoff; no executable code changed.
-- Reference: base commit `22cb24b`; documentation on `e2/validation-plan`,
-  awaiting review and not integrated progress.
-- Verification: `git diff --check` passed. A standard-library documentation check
-  resolved 31 local Markdown links and parsed all 5 shell blocks with `bash -n`;
-  no errors. These are documentation checks, not algorithm tests.
-- Untested: dependency installation, every proposed team command, asset integrity,
-  prediction, runtime, external accuracy and cross-laptop reproduction.
-- Interface changes: none implemented. E2/E3 must agree the missing-value policy
-  for restart evidence; E1/E4/E5 review the proposed shared harness additions.
-- Decision: synthetic correctness first, independent reference decoder, official
-  metric reuse, other-match quality evaluation if eligible data is available.
-- Next task: agree policy and build the smallest synthetic vertical slice.
-- Help needed: E1 contracts and environment; E3 neutral/restart semantics; E4
-  metric/behavior review and external-data feasibility; E5 integration/CI.
+- Reference: Belek's base `c8258b6`, PR #6; this increment is on
+  `e2/isken-validation`, not integrated progress on main.
+- Run: `python -m unittest discover -s tests` (132 pass);
+  `python -m tests.e2_scenarios` reproduces the report's boundary table.
+- Shared fields/signature: unchanged. `match.fps` now determines dwell counts;
+  explicit conflicting config fps and mismatched evidence timelines fail.
+  Non-integer dwell products round up. E1/E3/E4/E5 should review these semantics.
+- Decision: retain current pause/default-D/restart policy and default thresholds;
+  document counterexamples. Backdating is not enabled without a bounded policy.
+- Untested: Python 3.12, real features/E5 pipeline, full-data local execution,
+  external accuracy, scaling benchmarks, and second-laptop reproduction.
+- Help needed: Belek/E4 behavior review, E3 unknown-team restart discussion,
+  E4 feature builder, and E5 pipeline integration. Hidden-match improvement is
+  not measured; the public answer window was not used.
 
 ## Belek's track (`e2/state-v1`)
 

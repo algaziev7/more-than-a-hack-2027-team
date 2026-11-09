@@ -22,27 +22,55 @@ from tests.e2_scenarios import TIMING_CASES, evidence_sequence, label_transition
 
 
 def grouped_reference(symbols, half, team_required, dead_required):
-    """Small offline oracle: remove neutral observations and group decisive runs.
+    """Independent re-derivation of the decode() policy from its prose description.
 
-    A run with enough observations starts a new state at its nth observation.
-    Map that boundary back onto the original frame axis. This intentionally
-    uses whole runs and suffix assignment, not production's pending counter.
-    It only covers unambiguous symbols, not general evidence fusion.
+    Through 2026-11-08 this was a purely declarative "group runs, check each run's own length,
+    suffix-assign from its boundary" oracle, deliberately avoiding production's pending-occurrence
+    counter for structural independence. Decision 6 (2026-11-09) broke that: whether an H/A
+    observation counts at all now depends on the *current state* and a *dead_confirmed* latch at
+    that exact moment, both of which only make sense evaluated in temporal sequence -- a single D
+    observation can latch the flag without itself transitioning the state; an R between two
+    otherwise-qualifying H observations doesn't break their run (Decision 3: a non-decisive frame
+    pauses a pending count, it doesn't reset it) but does clear the latch mid-run. No declarative
+    whole-run check can express that without silently becoming wrong in some case (as happened
+    twice while developing this update). So this is now a sequential walk, each piece re-derived
+    independently from the written policy (not by importing or calling state_machine.decode) --
+    less structurally different from production than the original design, but still a second,
+    independently-authored implementation of the same prose spec, which is what actually matters
+    for catching a transcription or off-by-one error in either one.
     """
     labels = ["X"] * len(symbols)
     for half_id, indices in groupby(range(len(symbols)), key=lambda i: half[i]):
         indices = list(indices)
         if half_id == 0:
             continue
-        first, last = indices[0], indices[-1] + 1
-        labels[first:last] = ["D"] * (last - first)
-        decisive = [i for i in indices if symbols[i] in "HAD"]
-        for symbol, observations in groupby(decisive, key=lambda i: symbols[i]):
-            observations = list(observations)
-            required = dead_required if symbol == "D" else team_required
-            if len(observations) >= required:
-                boundary = observations[required - 1]
-                labels[boundary:last] = [symbol] * (last - boundary)
+        state, dead_confirmed = "D", False
+        pending_symbol, pending_count = None, 0
+        for i in indices:
+            symbol = symbols[i]
+            if symbol == "D":
+                dead_confirmed = True
+            elif symbol == "R":
+                dead_confirmed = False
+
+            candidate = symbol if symbol in "HAD" else None
+            if candidate in ("H", "A") and state == "D" and dead_confirmed:
+                candidate = None  # Decision 6: not proof play resumed, treat as no signal
+
+            if candidate is None:
+                labels[i] = state
+                continue
+            if candidate == state:
+                pending_symbol, pending_count = None, 0
+                labels[i] = state
+                continue
+            pending_count = pending_count + 1 if candidate == pending_symbol else 1
+            pending_symbol = candidate
+            required = dead_required if candidate == "D" else team_required
+            if pending_count >= required:
+                state = candidate
+                pending_symbol, pending_count = None, 0
+            labels[i] = state
     return labels
 
 
@@ -142,8 +170,10 @@ class StateMachineValidationTests(unittest.TestCase):
                 self.assertEqual(label_transitions(result.labels, start=30), events)
 
     def test_measured_boundaries_and_missed_short_possession(self):
-        expected = (([14], 0, 0), ([1], 0, 0), ([14], 0, 0),
-                    ([1, 14], 0, 0), ([114], 0, 0), ([], 2, 0),
+        # Decision 6 (2026-11-09): Restart and Same-team restart now carry +1 frame extra delay --
+        # the cost of requiring the inserted "R" (restart proof) before team evidence counts.
+        expected = (([14], 0, 0), ([1], 0, 0), ([15], 0, 0),
+                    ([1, 15], 0, 0), ([114], 0, 0), ([], 2, 0),
                     ([14, 14], 0, 0), ([14, 14], 0, 0))
         for case, wanted in zip(TIMING_CASES, expected):
             with self.subTest(case=case.name):
@@ -223,7 +253,10 @@ class StateMachineValidationTests(unittest.TestCase):
         events = label_transitions(prediction.labels)
         self.assertEqual([(a, b) for _, a, b in events], [("D", "H"), ("H", "D"), ("D", "H")])
         # E3 first rejects the jump, then needs 15 still observations; E2 adds one frame.
-        self.assertEqual(events, [(14, "D", "H"), (46, "H", "D"), (74, "D", "H")])
+        # Decision 6 (2026-11-09): the final restart now also waits for E3's own confirmed-live
+        # signal before team evidence counts at all (74 -> 79) -- team proximity alone is no
+        # longer enough to leave a confirmed stop, which is the whole point of that decision.
+        self.assertEqual(events, [(14, "D", "H"), (46, "H", "D"), (79, "D", "H")])
         with tempfile.TemporaryDirectory() as temporary:
             first, second = Path(temporary) / "first.csv", Path(temporary) / "second.csv"
             write_submission(prediction, first, n_expected=100)

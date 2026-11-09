@@ -159,6 +159,53 @@ check (never as a result): `spellF1` 0.0952 — far below the baseline, as expec
 real tracking-based team evidence the only team signal available is Smart Tagging's sparse hints.
 This number is not informative about the real approach and should not be read as one.
 
+## Decision 6 — exiting a confirmed stop requires proof play resumed, not just quiet
+
+Found by Almaz, reviewing PR #6/#7 (2026-11-09): the throw-in scenario. Play is confirmed stopped.
+The stop signal then simply goes quiet — the tag window ends, or E3 just has no opinion either
+way — which is *not* the same as confirmed live. Meanwhile a player is standing near the ball,
+waiting to take the throw. Before this decision, `team_reliable` was only masked by `~is_dead`,
+checked on the *current frame alone* — so the instant the dead signal stopped being actively
+confirmed, team proximity was free to act, with nothing requiring positive evidence the throw had
+actually been taken. Reproduced independently before trusting the report: a confirmed 30-frame
+stop followed by 30 frames of neutral dead-signal + strong, reliable team evidence switched the
+label to `H` 14 frames later, with zero evidence play had resumed.
+
+Fix: once a stop is genuinely confirmed, a sticky `dead_confirmed` flag latches on — set by a
+single `is_dead` frame (deliberately not gated by `dead_dwell_frames`; see why below), cleared by
+a single frame of positive proof (`priors.restart_evidence` clearing `restart_evidence_threshold`,
+or E3's own confirmed-live reading, `dead_evidence` reliably at or below `live_confirmed_threshold`).
+While that flag is set and the current state is `D`, a team candidate (H/A) is treated as "no
+decisive signal" — paused via the existing Decision 3 mechanism, not reset — rather than allowed
+to accumulate toward a transition. This never affects the half-start default `D` (nothing has ever
+confirmed a stop there), so an ordinary kickoff is untouched; it only gates *leaving a stop that
+was actually confirmed*.
+
+**Why a single `is_dead` frame latches it, not a full `dead_dwell_frames` run:** a single frame of
+`priors.dead_evidence`/`dead_reliability` already represents E3's *own* confirmed output, which has
+already paid its own confirmation delay (Decision 5's whole point). Requiring our own dwell on top
+before trusting it would be exactly the double-confirmation Decision 5 already rejected.
+
+**Cost of getting this right turned out to be real, not just conceptual.** Isken's exhaustive
+5,461-sequence and 200-seeded-case differential tests (`tests/test_state_machine_validation.py`)
+had to be updated, and the first two attempts at updating their oracle (`grouped_reference`) were
+themselves wrong — the interaction between this latch and the existing pending-occurrence counter
+(a `D` observation can latch the flag without itself transitioning state; an `R` between two
+otherwise-qualifying `H` observations doesn't break their run but does unlatch mid-run) isn't
+expressible as a purely declarative "group runs, check each run's own length" oracle. The oracle
+is now a sequential walk, independently re-derived from the written policy rather than calling
+`decode()` — less structurally different from production than the original design, but correct,
+which matters more. Two existing scenario fixtures (`e2_scenarios.TIMING_CASES`'s "Restart" and
+"Same-team restart", and `tests/test_state_machine.py`'s same-team-restart test) had implicitly
+relied on team evidence alone ending a stop — exactly the bug being fixed — and needed a believable
+restart-confirmation frame added to remain meaningful tests rather than silently pinning the old
+behavior.
+
+**Trade-off, stated plainly:** this makes `D`'s exit more dependent on E3's restart/live signal
+actually firing. An untagged, untracked stoppage where the motion detector also misses the restart
+could now stay `D` longer than reality. Judged to be the safer failure mode — a coach would rather
+see "still dead" too long than a phantom possession — but it is a real cost, not a free fix.
+
 ## Explicitly deferred (not forgotten, not yet needed)
 
 - No vectorization of the per-frame loop — 199k frames is cheap in plain Python; confirmed at

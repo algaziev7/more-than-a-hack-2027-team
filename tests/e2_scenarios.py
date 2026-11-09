@@ -62,8 +62,13 @@ class TimingCase:
 TIMING_CASES = (
     TimingCase("Turnover", "H" * 30 + "A" * 30, ((30, "H", "A"),)),
     TimingCase("Stop", "H" * 30 + "D" * 30, ((30, "H", "D"),)),
-    TimingCase("Restart", "D" * 30 + "A" * 30, ((30, "D", "A"),)),
-    TimingCase("Same-team restart", "H" * 30 + "D" * 10 + "H" * 30,
+    # Decision 6 (2026-11-09): team evidence alone cannot exit a confirmed stop, so these two
+    # cases now include a single "R" (restart/live-motion proof) at the same position the team
+    # symbol used to start -- without it, "D"*30+"A"*30 would stay D forever, which is exactly
+    # the bug Decision 6 fixes. The expected frame stays at the true moment of restart (where R
+    # now sits); the measured delay below grows by 1 frame, the cost of requiring that proof.
+    TimingCase("Restart", "D" * 30 + "R" + "A" * 29, ((30, "D", "A"),)),
+    TimingCase("Same-team restart", "H" * 30 + "D" * 10 + "R" + "H" * 29,
                ((30, "H", "D"), (40, "D", "H"))),
     TimingCase("Turnover with 100-frame gap", "H" * 30 + "A" * 7 + "." * 100 + "A" * 8,
                ((30, "H", "A"),)),

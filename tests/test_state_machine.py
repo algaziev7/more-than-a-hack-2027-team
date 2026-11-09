@@ -125,13 +125,20 @@ class StateMachineTests(unittest.TestCase):
         self.assertTrue(np.all(labels[25:30] == D), labels)
 
     def test_same_team_restart_creates_two_separate_spells(self):
-        """D must appear as its own block between two H runs, even though the team is unchanged."""
+        """D must appear as its own block between two H runs, even though the team is unchanged.
+
+        Decision 6 (2026-11-09): team evidence alone cannot exit a confirmed stop -- it needs
+        independent proof play resumed. A single restart-confirmation frame right as the
+        stoppage ends stands in for that proof (a tag window or E3's own live-motion
+        confirmation, in reality); without it this stoppage would never end at all.
+        """
         n = 70
         features, priors = _establish_home(n)
         stoppage = slice(20, 35)
         priors.dead_evidence[stoppage] = 0.95
         priors.dead_reliability[stoppage] = 0.9
         features.team_reliability[stoppage] = 0.0
+        priors.restart_evidence[35] = 0.75
         labels = _run(_match(n), features, priors)
 
         # Drop the unavoidable D warm-up every half starts in (Decision 2) before encoding runs,
@@ -162,6 +169,51 @@ class StateMachineTests(unittest.TestCase):
             home_now = (i % 2 == 0)
             features.team_evidence[i] = [0.95, 0.05] if home_now else [0.05, 0.95]
             features.team_reliability[i] = 0.9
+        labels = _run(_match(n), features, priors)
+        self.assertTrue(np.all(labels[CONFIG.team_dwell_frames:] == H), labels)
+
+    def test_player_standing_near_ball_does_not_resume_a_confirmed_stop(self):
+        """Decision 6 (2026-11-09), found by Almaz: the throw-in scenario.
+
+        Play is confirmed stopped. The stop signal then simply goes quiet (tag window ended, no
+        opinion either way) -- NOT confirmed live -- while a player happens to stand near the
+        ball the whole time, waiting to take the throw. Team proximity alone must not read as
+        "that team has it": the throw hasn't been taken, there's no proof play resumed.
+        """
+        n = 60
+        features, priors = _establish_home(n)
+        confirmed_stop = slice(0, 30)
+        priors.dead_evidence[confirmed_stop] = 0.9
+        priors.dead_reliability[confirmed_stop] = 0.5
+        quiet_but_unresolved = slice(30, 60)
+        priors.dead_evidence[quiet_but_unresolved] = 0.5   # neutral: no opinion, NOT "confirmed live"
+        priors.dead_reliability[quiet_but_unresolved] = 0.0
+        priors.restart_evidence[quiet_but_unresolved] = 0.0
+        features.team_evidence[quiet_but_unresolved] = [0.95, 0.05]  # a player merely nearby
+        features.team_reliability[quiet_but_unresolved] = 0.9
+        labels = _run(_match(n), features, priors)
+        self.assertTrue(np.all(labels == D), labels)
+
+    def test_restart_with_real_evidence_still_works(self):
+        """Contrast with the above: once there's genuine proof play resumed, team evidence
+        resumes deciding who has it, exactly as before Decision 6."""
+        n = 60
+        features, priors = _establish_home(n)
+        confirmed_stop = slice(0, 30)
+        priors.dead_evidence[confirmed_stop] = 0.9
+        priors.dead_reliability[confirmed_stop] = 0.5
+        priors.restart_evidence[30] = 0.75  # the throw is actually taken here
+        features.team_evidence[30:60] = [0.95, 0.05]
+        features.team_reliability[30:60] = 0.9
+        labels = _run(_match(n), features, priors)
+        self.assertTrue(np.all(labels[45:] == H), labels)
+
+    def test_ordinary_kickoff_is_unaffected_by_the_restart_gate(self):
+        """Decision 6 only gates leaving a *confirmed* stop. The half-start default D (nothing
+        has ever confirmed a stop -- an ordinary kickoff) is untouched: team evidence alone still
+        establishes possession, exactly as it did before this decision existed."""
+        n = 40
+        features, priors = _establish_home(n)  # no dead/restart signal anywhere in this fixture
         labels = _run(_match(n), features, priors)
         self.assertTrue(np.all(labels[CONFIG.team_dwell_frames:] == H), labels)
 

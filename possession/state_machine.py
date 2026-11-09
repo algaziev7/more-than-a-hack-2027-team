@@ -38,6 +38,13 @@ docs/team/decisions/2026-10-23-e2-data-evidence-and-state-machine-design.md. Sum
   before adding further persistence." Stacking a second long dwell on top would double-delay
   every dead-ball call for no benefit; a short one is still kept as a margin against a single
   noisy frame, not as a second confirmation window.
+- Decision 6: once a stop has genuinely been confirmed, team evidence alone can no longer exit
+  `D` -- it needs independent proof play actually resumed (reliable restart evidence, or E3's own
+  live-motion confirmation). Found by Almaz: a player merely standing near the ball while waiting
+  to take a throw-in, with the stop signal having simply gone quiet (not confirmed live), could
+  otherwise read as "that player's team now has it." This keeps "is play live" and "who has it"
+  as genuinely separate questions, per TEAM_PLAN.md. It never affects a `D` that's merely the
+  half-start default (nothing has ever confirmed a stop), so an ordinary kickoff is unaffected.
 
 `config` follows the same convention as `dead_ball.DeadBallConfig` / `tagging.TaggingConfig`: the
 caller passes the *whole* shared pipeline dict, and this module reads only its own
@@ -81,6 +88,12 @@ class StateMachineConfig:
     team_margin_threshold: float = 0.15   # required |evidence[H] - evidence[A]| to be decisive
     team_reliability_min: float = 0.25    # combined reliability floor to trust that margin
 
+    # Decision 6: once dead_confirmed is latched (a real stop was seen), team evidence alone
+    # cannot exit D. One of these must also hold, on some frame since the stop was confirmed:
+    restart_evidence_threshold: float = 0.5   # priors.restart_evidence this high counts as proof
+    live_confirmed_threshold: float = 0.3     # priors.dead_evidence this low (and reliable) counts
+                                               # as E3's own confirmed live-motion signal (~0.1)
+
     def __post_init__(self):
         for field_ in fields(self):
             value = getattr(self, field_.name)
@@ -91,7 +104,8 @@ class StateMachineConfig:
         if min(self.dead_dwell_s, self.team_dwell_s) <= 0:
             raise ValueError("dwell durations must be positive")
         for name in ("dead_threshold", "dead_reliability_min", "restart_weight",
-                     "team_margin_threshold", "team_reliability_min"):
+                     "team_margin_threshold", "team_reliability_min",
+                     "restart_evidence_threshold", "live_confirmed_threshold"):
             if not 0 <= getattr(self, name) <= 1:
                 raise ValueError("state_machine.{} must be in [0, 1]".format(name))
 
@@ -168,8 +182,10 @@ def _validate_alignment(match, features, priors, half):
                     owner, name, expected))
 
 
-def _decisive_state_per_frame(features, priors, config: StateMachineConfig) -> np.ndarray:
-    """One candidate per frame: H, A, D, or None (object dtype) -- "no decisive signal here".
+def _decisive_state_per_frame(features, priors, config: StateMachineConfig):
+    """One candidate per frame (H, A, D, or None), plus two per-frame booleans Decision 6 needs:
+    `is_dead` (this frame alone looks confidently dead) and `exit_dead_ok` (this frame alone is
+    positive proof play has resumed -- not merely the absence of a dead signal).
 
     Dead/alive is checked before team identity: a confidently dead frame has no team to assign,
     and a stale team_evidence reading during a stoppage should not outvote a reliable dead signal.
@@ -177,14 +193,20 @@ def _decisive_state_per_frame(features, priors, config: StateMachineConfig) -> n
     n = len(priors.dead_evidence)
     candidate = np.full(n, None, dtype=object)
 
-    effective_dead = np.clip(
-        np.asarray(priors.dead_evidence, dtype=float)
-        - config.restart_weight * np.asarray(priors.restart_evidence, dtype=float),
-        0.0, 1.0,
-    )
+    dead_evidence = np.asarray(priors.dead_evidence, dtype=float)
+    restart_evidence = np.asarray(priors.restart_evidence, dtype=float)
     dead_reliable = np.asarray(priors.dead_reliability, dtype=float) >= config.dead_reliability_min
+
+    effective_dead = np.clip(dead_evidence - config.restart_weight * restart_evidence, 0.0, 1.0)
     is_dead = dead_reliable & (effective_dead >= config.dead_threshold)
     candidate[is_dead] = D
+
+    # Decision 6: proof play resumed, not just "no longer confirmed dead". live_confirmed is E3's
+    # own confirmed-live-motion reading (dead_evidence reliably low); restart_confirmed is a
+    # reliable restart clue (a tag window, or E3's CONFIRMED_RESTART pulse). Either is enough.
+    live_confirmed = dead_reliable & (dead_evidence <= config.live_confirmed_threshold)
+    restart_confirmed = restart_evidence >= config.restart_evidence_threshold
+    exit_dead_ok = live_confirmed | restart_confirmed
 
     team_evidence, team_reliability = _combine(
         np.asarray(features.team_evidence, dtype=float)[:, 0],
@@ -197,7 +219,7 @@ def _decisive_state_per_frame(features, priors, config: StateMachineConfig) -> n
         & (margin >= config.team_margin_threshold)
     candidate[team_reliable & (team_evidence >= 0.5)] = H
     candidate[team_reliable & (team_evidence < 0.5)] = A
-    return candidate
+    return candidate, is_dead, exit_dead_ok
 
 
 def decode(match, features, priors, config=None) -> Prediction:
@@ -223,7 +245,7 @@ def decode(match, features, priors, config=None) -> Prediction:
     _validate_alignment(match, features, priors, half)
     n = len(half)
 
-    candidate = _decisive_state_per_frame(features, priors, settings)
+    candidate, is_dead, exit_dead_ok = _decisive_state_per_frame(features, priors, settings)
 
     labels = np.full(n, X, dtype=object)
     transitions = []
@@ -232,6 +254,10 @@ def decode(match, features, priors, config=None) -> Prediction:
     pending_state = None
     pending_count = 0
     previous_half = 0
+    # Decision 6: sticky across frames (not just "this exact frame"), so a brief dead confirmation
+    # or a brief restart confirmation is remembered rather than needing to coincide with the exact
+    # frame team evidence is trying to act on.
+    dead_confirmed = False
 
     for i in range(n):
         this_half = int(half[i])
@@ -247,9 +273,20 @@ def decode(match, features, priors, config=None) -> Prediction:
             current_state = D
             pending_state = None
             pending_count = 0
+            dead_confirmed = False
         previous_half = this_half
 
+        if is_dead[i]:
+            dead_confirmed = True
+        if exit_dead_ok[i]:
+            dead_confirmed = False
+
         this_candidate = candidate[i]
+        if this_candidate in (H, A) and current_state == D and dead_confirmed:
+            # A real stop was confirmed and nothing has proven play resumed since -- a player
+            # merely being near the ball is not that proof (Decision 6). Treat as no decisive
+            # signal, same as a gap: paused, not reset.
+            this_candidate = None
         if this_candidate is None:
             # Decision 3: no decisive signal this frame -- pause the count, don't reset it. The
             # ball is missing on 41% of graded frames, in clusters; resetting here would make a

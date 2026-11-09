@@ -78,26 +78,48 @@ clusters). 10 synthetic tests pass (`python -m unittest tests.test_state_machine
 tested at full match scale (199,319 frames, random realistic evidence) in 0.04s, with the `X`
 count exactly matching the real ungraded-frame count from DATA.md.
 
+Reviewed and merged PR #7 (Isken's hardening pass: real match.fps use, ceil-not-round dwell
+rounding, cross-contract shape validation, config range checks, and 23 new tests including an
+independently-authored exhaustive/seeded differential reference) after running it myself and
+reproducing its core bug claim against the unpatched code first.
+
+Fixed a bug Almaz found reviewing both PRs (Decision 6): team evidence alone could resume a
+confirmed stop once the dead signal merely went quiet (not confirmed live) -- e.g. a player
+standing near the ball waiting to take a throw-in, before the throw is taken. Reproduced
+independently before trusting the report. Fix: a sticky `dead_confirmed` latch, cleared only by
+positive restart/live-motion proof, gates leaving `D` (never affects the half-start default, so
+an ordinary kickoff is unaffected). Required updating Isken's exhaustive-oracle tests too -- the
+interaction between the latch and the existing pending-counter isn't expressible as a purely
+declarative run-grouping oracle; it's now an independently-authored sequential walk instead. Full
+writeup in the decision doc's Decision 6.
+
+Verified end to end against the real match with E1's `load_match`/E3's `build_priors` (features
+still a placeholder): runs in ~15s, `X` count still exact, `D` share increased (6,384 -> 10,883
+frames) as expected -- the fix makes some previously-premature H/A calls correctly stay D longer.
+
 ### Next exact action
 
-Wire real evidence in, now that E1's contracts/data.py and E3's dead_ball.py/tagging.py exist on
-`main` -- confirm `INTERFACES.md`'s field names still match what `state_machine.py` duck-types
-against (it predates the merged contracts), then run against the real match end to end.
+Still blocked on Beks/E4's real `features.py` for a meaningful accuracy picture -- everything
+above is plumbing/policy correctness, not a result. Once that lands, re-run the full pipeline and
+reconsider `team_dwell_s`/the Decision-6 thresholds with real tracking data in the loop, per the
+decision doc's own "revisit, don't treat as fixed constants" framing.
 
 ### Handoff
 
-- Changed files: `possession/state_machine.py`, `tests/test_state_machine.py`, the decision doc.
-- Reference: commits `af30411`, `39c81da` on `e2/state-v1` (not yet merged to main).
-- Verification: `python -m unittest tests.test_state_machine -v` -- 10/10 pass. Full-match-scale
-  smoke test with synthetic random evidence -- 0.04s, correct X count.
-- Untested: anything against real E1/E3/E4 outputs; only synthetic fixtures so far.
-- Interface changes: none yet -- duck-typed against INTERFACES.md's promised field names rather
-  than importing contracts.py, specifically so this didn't block on E1/E3/E4 existing.
-- Decision: deterministic rule-based hysteresis for v1, not a learned model (no legitimate
-  training signal exists yet); dwell length is a real, quantified latency cost, not free margin.
-- Next task: validate against the now-merged real contracts/dead_ball/tagging modules.
-- Help needed: E4 review of the fusion/threshold logic; confirmation from E3 on how broad the
-  real dead-ball evidence coverage is (see the decision doc's dependency-risk note).
+- Changed files: `possession/state_machine.py`, `tests/test_state_machine.py`,
+  `tests/e2_scenarios.py`, `tests/test_state_machine_validation.py`, the decision doc.
+- Reference: PR #6 (merged PR #7 into it), plus a follow-up commit for Decision 6, on
+  `e2/state-v1` -- not yet merged to `main`.
+- Verification: `python -m unittest discover -s tests` -- 135/135 pass (132 + 3 new for Decision
+  6). Real-match smoke test as above.
+- Untested: anything against real E4 features; only a neutral placeholder so far.
+- Interface changes: `StateMachineConfig` gained `restart_evidence_threshold` and
+  `live_confirmed_threshold` (both [0,1]-validated, both reviewed/documented in Decision 6).
+- Decision: team evidence must never be the sole proof a stop ended (Decision 6); thresholds for
+  "what counts as proof" are a judgement call, documented as such, not derived from any data.
+- Next task: wire in real features; revisit dwell/threshold defaults once that exists.
+- Help needed: E4 review of the fusion/threshold logic generally; Almaz/E3 on how often real
+  dead-ball evidence will carry genuine restart/live-motion confirmation vs. staying neutral.
 
 Update this file in the same commit as your code, then push your branch.
 Branch progress is not integrated progress until its PR is merged.

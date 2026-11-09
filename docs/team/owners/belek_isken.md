@@ -126,6 +126,18 @@ resurface against a later, unrelated turnover either. Third amendment in the dec
 one didn't move the real-match label counts (placeholder features have zero team reliability
 everywhere, so the scenario this fixes can't occur without real tracking evidence yet).
 
+A fifth review found the safety valve itself (second amendment) never actually required
+*sustained* evidence, just "75 occurrences, however scattered" -- it reused Decision 3's
+unbounded gap tolerance unmodified. Reproduced independently (scattered touches every 12 frames
+for ~37s still eventually won). My first attempted fix (reset on a per-gap bound) was verified
+*not* to work before I wrote anything further -- any fixed gap bound still lets enough
+just-under-the-bound gaps chain into an arbitrarily long span. Real fix: replaced the plain
+pending counter with a deque of supporting frame indices, trimmed to a genuine sliding window
+(`2 * latched_team_dwell_frames`) while gated; ordinary dwell keeps its original unbounded
+tolerance untouched. Fourth amendment in the decision doc. Real match: `D` share rose slightly,
+7,514 -> 7,970 -- this time via Smart Tagging's real (if sparse) team hints, not team evidence,
+since placeholder features still have zero reliability.
+
 ### Next exact action
 
 Still blocked on Beks/E4's real `features.py` for a meaningful accuracy picture -- everything
@@ -138,9 +150,9 @@ don't treat as fixed constants" framing.
 
 - Changed files: `possession/state_machine.py`, `tests/test_state_machine.py`,
   `tests/e2_scenarios.py`, `tests/test_state_machine_validation.py`, the decision doc.
-- Reference: PR #6 (merged PR #7 into it), plus four follow-up commits for Decision 6 and its
-  three amendments, on `e2/state-v1` -- not yet merged to `main`.
-- Verification: `python -m unittest discover -s tests` -- 139/139 pass (132 + 7 new for Decision
+- Reference: PR #6 (merged PR #7 into it), plus five follow-up commits for Decision 6 and its
+  four amendments, on `e2/state-v1` -- not yet merged to `main`.
+- Verification: `python -m unittest discover -s tests` -- 140/140 pass (132 + 8 new for Decision
   6 and its amendments). Real-match smoke test as above.
 - Untested: anything against real E4 features; only a neutral placeholder so far.
 - Interface changes: `StateMachineConfig` gained `restart_evidence_threshold`,

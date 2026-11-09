@@ -260,6 +260,30 @@ class StateMachineTests(unittest.TestCase):
         # Well past it: must eventually have left D despite zero restart/live-motion proof ever.
         self.assertIn(A, labels[150:], "sustained team evidence must eventually override the latch")
 
+    def test_sparse_scattered_evidence_never_overrides_a_latched_stop(self):
+        """A fifth review found the safety valve reused Decision 3's unbounded gap tolerance,
+        so 75 *scattered* supporting frames spread over any length of time -- not sustained at
+        all -- would still eventually override a confirmed stop. A per-gap bound can't fix this
+        either (verified before landing on the real fix): any fixed bound still lets a long
+        enough chain of just-under-the-bound gaps span an arbitrary total duration. Reproduced
+        independently with the reviewer's own repro (one supporting frame every 12 frames, for
+        ~37s) before trusting it -- it used to reach A at frame 918; it must never leave D now.
+
+        Fixed with a genuine sliding window: only occurrences within the last
+        2 * latched_team_dwell_frames count toward the safety valve, so it can never reflect
+        more than that many frames of real elapsed time, however it's distributed.
+        """
+        n = 1000
+        features, priors = _features(n), _priors(n)  # neutral everywhere except what's set below
+        confirmed_stop = slice(0, 30)
+        priors.dead_evidence[confirmed_stop] = 0.9
+        priors.dead_reliability[confirmed_stop] = 0.5
+        for i in range(30, n, 12):
+            features.team_evidence[i] = [0.1, 0.9]
+            features.team_reliability[i] = 0.9
+        labels = _run(_match(n), features, priors)
+        self.assertTrue(np.all(labels == D), "scattered touches must never look sustained")
+
     def test_stray_dead_blip_during_live_play_does_not_delay_an_unrelated_turnover(self):
         """A fourth review found that `dead_confirmed` can latch while `current_state` is
         already H/A -- a single is_dead frame that never reaches dead_dwell_frames sets it

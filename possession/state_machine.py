@@ -55,6 +55,7 @@ caller passes the *whole* shared pipeline dict, and this module reads only its o
 `config["state_machine"]` section, so Goblin's pipeline can pass one config object to every stage.
 """
 
+from collections import deque
 from dataclasses import dataclass, fields, replace
 from numbers import Real
 import math
@@ -297,7 +298,9 @@ def decode(match, features, priors, config=None) -> Prediction:
 
     current_state = D
     pending_state = None
-    pending_count = 0
+    # Frame indices supporting pending_state, most recent at the right. A plain counter cannot
+    # express the safety valve's "sustained," not just "many, however far apart" -- see below.
+    pending_frames = deque()
     previous_half = 0
     # Decision 6: sticky across frames (not just "this exact frame"), so a brief dead confirmation
     # or a brief restart confirmation is remembered rather than needing to coincide with the exact
@@ -316,8 +319,7 @@ def decode(match, features, priors, config=None) -> Prediction:
             # for why the reset target is D and why that's only *harmless*, not correct, at the
             # start of the first half.
             current_state = D
-            pending_state = None
-            pending_count = 0
+            pending_state, pending_frames = None, deque()
             dead_confirmed = False
         previous_half = this_half
 
@@ -339,7 +341,7 @@ def decode(match, features, priors, config=None) -> Prediction:
                 # exit_dead_ok frame would wipe an ordinary, never-gated turnover's progress for
                 # no reason. A pending D-candidate is never touched here either way -- entering D
                 # was never gated by this latch, only leaving it.
-                pending_state, pending_count = None, 0
+                pending_state, pending_frames = None, deque()
 
         this_candidate = candidate[i]
         if this_candidate is None:
@@ -350,18 +352,33 @@ def decode(match, features, priors, config=None) -> Prediction:
             continue
 
         if this_candidate == current_state:
-            pending_state, pending_count = None, 0
+            pending_state, pending_frames = None, deque()
             labels[i] = current_state
             continue
 
         if this_candidate == pending_state:
-            pending_count += 1
+            pending_frames.append(i)
         else:
-            pending_state, pending_count = this_candidate, 1
+            pending_state, pending_frames = this_candidate, deque([i])
+
+        gated = this_candidate in (H, A) and current_state == D and dead_confirmed
+        if gated:
+            # The safety valve's whole justification is *sustained* evidence, categorically
+            # different from brief proximity -- not "however many occurrences, however far
+            # apart." Decision 3's unbounded gap tolerance is deliberate for ordinary dwell (the
+            # ball can be missing a while mid-possession without doubt creeping in about who had
+            # it), but a fixed per-gap bound can't express "sustained" either: any positive bound
+            # still lets a long enough chain of just-under-the-bound gaps span an arbitrary total
+            # span (this was tried and verified not to work before landing here). A genuine
+            # sliding window does: only occurrences within the last `window` frames count, so the
+            # count can never reflect more than `window` frames of real elapsed time.
+            window = 2 * settings.latched_team_dwell_frames
+            while pending_frames and i - pending_frames[0] > window:
+                pending_frames.popleft()
 
         if this_candidate == D:
             required = settings.dead_dwell_frames
-        elif current_state == D and dead_confirmed:
+        elif gated:
             # Decision 6's safety valve: a confirmed stop needs independent proof it ended, but
             # team evidence alone can still override after much longer -- long enough to be
             # categorically different from the brief proximity Decision 6 exists to ignore, and
@@ -370,11 +387,11 @@ def decode(match, features, priors, config=None) -> Prediction:
             required = settings.latched_team_dwell_frames
         else:
             required = settings.team_dwell_frames
-        if pending_count >= required:
+        if len(pending_frames) >= required:
             transitions.append({
                 "frame": int(match.frame[i]) if hasattr(match, "frame") else i,
                 "from_state": current_state, "to_state": this_candidate,
-                "reason": "{} decisive occurrences for the new candidate".format(pending_count),
+                "reason": "{} decisive occurrences for the new candidate".format(len(pending_frames)),
             })
             if current_state == D and this_candidate != D:
                 # Leaving D, whether via real proof or the safety valve -- don't carry a latch
@@ -384,7 +401,7 @@ def decode(match, features, priors, config=None) -> Prediction:
                 # never-gated turnover's progress, same failure mode as the guard just above.
                 dead_confirmed = False
             current_state = this_candidate
-            pending_state, pending_count = None, 0
+            pending_state, pending_frames = None, deque()
 
         labels[i] = current_state
 

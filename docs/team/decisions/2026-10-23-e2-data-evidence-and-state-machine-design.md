@@ -287,6 +287,37 @@ candidate was actually subject to the gate, not merely latched-but-irrelevant); 
 resurface and interfere with a *later*, unrelated turnover either. Both paths now have dedicated
 regression tests.
 
+### Fourth amendment — the safety valve itself counted scattered observations, not sustained ones
+
+A fifth review found that the safety valve (second amendment) reused Decision 3's pause-don't-
+reset counter unmodified — and Decision 3's unbounded gap tolerance, exactly right for ordinary
+dwell, is wrong here: it let 75 *scattered* supporting frames, spread over any length of time,
+count the same as 75 consecutive ones. The stated justification for the valve (several seconds of
+genuinely *sustained* evidence, categorically different from brief proximity) was never actually
+enforced by the code. Reproduced independently with the reviewer's own repro before trusting it:
+confirmed stop, then one supporting frame every 12 frames for ~37s — reached `A` at frame 918,
+having never once seen anything resembling sustained support.
+
+**First attempt, verified not to work before landing on the real fix:** reset the count when the
+gap since the last supporting frame exceeds a bound (`team_dwell_frames`). This doesn't fix it —
+any *fixed per-gap* bound still permits an arbitrarily long chain of just-under-the-bound gaps to
+span an unbounded total duration; the reviewer's own 12-frame spacing sits under a 15-frame bound
+by construction, so that fix left their repro unchanged. Checked by rerunning it before writing
+anything further.
+
+**Actual fix: a genuine sliding window.** `pending_count` (an integer) is replaced by
+`pending_frames`, a deque of the frame indices supporting the current candidate. While gated, it's
+trimmed to the last `2 * latched_team_dwell_frames` frames before its length is compared against
+`latched_team_dwell_frames` — so the count can never reflect more than that many frames of real
+elapsed time, however the supporting frames are distributed within it. Ordinary (non-latched)
+dwell is untouched: the deque is left untrimmed there, preserving Decision 3's original unbounded
+gap tolerance exactly. Dedicated regression test added for the sparse case.
+
+On the real match (still placeholder tracking features): `D` share rose slightly, 7,514 -> 7,970
+frames — not from team-evidence proximity, which has zero reliability in the placeholder, but
+from Smart Tagging's real `tag_team_evidence`, which can itself be sparse across a long stretch
+and was previously enough to trip the valve without being sustained either.
+
 ## Explicitly deferred (not forgotten, not yet needed)
 
 - No vectorization of the per-frame loop — 199k frames is cheap in plain Python; confirmed at

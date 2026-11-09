@@ -206,6 +206,36 @@ actually firing. An untagged, untracked stoppage where the motion detector also 
 could now stay `D` longer than reality. Judged to be the safer failure mode — a coach would rather
 see "still dead" too long than a phantom possession — but it is a real cost, not a free fix.
 
+### Amendment — the first version of this fix was itself broken (two independent findings, both verified)
+
+A later review (another session, not Isken/Almaz) caught two real problems with the fix as first
+written, before either was merged further:
+
+1. **The fix was a no-op for the actual target scenario.** `restart_evidence_threshold` defaulted
+   to `0.5` — exactly `tagging.TaggingConfig.restart_strength`'s default. A bare Smart Tagging
+   `SET PIECES` window sets `restart_evidence` to that value for its *entire* span, including
+   every frame `dead_ball.py`'s `tagged_stop` also confirms as dead. So on a real tagged
+   stoppage — a throw-in, the exact case Almaz reported — `is_dead` latches `dead_confirmed` and
+   `exit_dead_ok` clears it again *on the same frame*, every frame, and the latch never holds.
+   Reproduced independently with the review's own repro before trusting it (confirmed dead on
+   frames 5-20, a flat 0.5 restart hint across the whole sequence, strong team evidence from
+   frame 25 — flips to `H` at frame 39 on the unpatched fix). Fixed: `restart_evidence_threshold`
+   raised to `0.6` — strictly above tagging's bare hint, at or below E3's confirmed-restart pulse
+   of `0.75` — plus a check in `decode()` that validates this against the real `tagging` config
+   section when one is supplied, so the two thresholds can't silently drift back into collision.
+2. **The latch has no expiry, and E3's own escape path can close.** `dead_ball.py` resets its
+   `last_stop` context the moment the ball becomes unusable (occluded) — and the ball is missing
+   on 41% of graded frames, in clusters. Without a recent stop, E3 only confirms live motion via
+   `control` (strong, reliable team evidence) — so a stop followed by an occluded restart, with
+   tracking still ambiguous once the ball reappears, could leave the latch set, and every
+   subsequent H/A frame suppressed, for an unbounded stretch. Not fixed yet, on purpose: the
+   reviewer flagged this at medium confidence precisely because it depends on real-data rates
+   nobody can see without E4's features (unlike finding 1, which was independent of any such
+   rate). Guessing a bound now would be exactly the mistake EVALUATION.md warns against —
+   picking a number with no real signal to justify it. Revisit once real features exist: measure
+   actual `D`-spell lengths, then decide whether a bound (e.g. expiring the latch after some
+   multiple of `team_dwell_frames` with zero exit-evidence) is actually needed.
+
 ## Explicitly deferred (not forgotten, not yet needed)
 
 - No vectorization of the per-frame loop — 199k frames is cheap in plain Python; confirmed at

@@ -208,6 +208,26 @@ class StateMachineTests(unittest.TestCase):
         labels = _run(_match(n), features, priors)
         self.assertTrue(np.all(labels[45:] == H), labels)
 
+    def test_bare_tagged_restart_window_does_not_clear_the_latch(self):
+        """A second review found the real bug in the first fix: Smart Tagging's bare SET PIECES
+        window sets restart_evidence to its flat default (0.5) for the window's *entire* span --
+        including every frame a tagged stop is also confirmed on. At threshold 0.5, that alone
+        cleared the Decision 6 latch on the very same frame it got set, making the fix a no-op
+        for exactly the tagged-stoppage case (a throw-in) it exists to fix. Reproduced
+        independently before trusting the report; threshold raised to 0.6 (strictly above
+        tagging's bare hint, at or below E3's confirmed-restart pulse of 0.75) to fix it.
+        """
+        n = 60
+        features, priors = _establish_home(n)
+        confirmed_stop = slice(5, 21)
+        priors.dead_evidence[confirmed_stop] = 0.9
+        priors.dead_reliability[confirmed_stop] = 0.5
+        priors.restart_evidence[:] = 0.5  # a bare tag window, spanning the whole sequence
+        features.team_evidence[25:] = [0.9, 0.1]
+        features.team_reliability[25:] = 0.8
+        labels = _run(_match(n), features, priors)
+        self.assertTrue(np.all(labels == D), labels)
+
     def test_ordinary_kickoff_is_unaffected_by_the_restart_gate(self):
         """Decision 6 only gates leaving a *confirmed* stop. The half-start default D (nothing
         has ever confirmed a stop -- an ordinary kickoff) is untouched: team evidence alone still

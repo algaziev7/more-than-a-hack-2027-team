@@ -90,7 +90,17 @@ class StateMachineConfig:
 
     # Decision 6: once dead_confirmed is latched (a real stop was seen), team evidence alone
     # cannot exit D. One of these must also hold, on some frame since the stop was confirmed:
-    restart_evidence_threshold: float = 0.5   # priors.restart_evidence this high counts as proof
+    #
+    # restart_evidence_threshold must sit strictly ABOVE tagging.TaggingConfig.restart_strength
+    # (default 0.5) and at or below dead_ball's CONFIRMED_RESTART pulse (0.75). A bare Smart
+    # Tagging SET PIECES window sets restart_evidence to restart_strength for its *entire* span
+    # (tagging.py), including every frame tagging/dead_ball jointly mark as a confirmed stop
+    # (dead_ball.py's tagged_stop) -- at threshold 0.5 (`>=`), that bare hint alone would clear
+    # the latch on the very same frame it gets set, making this decision a no-op for exactly the
+    # tagged-stoppage case (a throw-in) it exists to fix. 0.6 is strictly above the bare hint and
+    # below the confirmed pulse; decode() also validates this against the real tagging config
+    # when given one, so the two can't silently drift back into collision.
+    restart_evidence_threshold: float = 0.6
     live_confirmed_threshold: float = 0.3     # priors.dead_evidence this low (and reliable) counts
                                                # as E3's own confirmed live-motion signal (~0.1)
 
@@ -241,6 +251,19 @@ def decode(match, features, priors, config=None) -> Prediction:
         if "fps" in (config or {}).get("state_machine", {}) and settings.fps != match.fps:
             raise ValueError("state_machine.fps must agree with match.fps")
         settings = replace(settings, fps=match.fps)
+
+    # Decision 6's restart_evidence_threshold must stay strictly above tagging's bare restart
+    # hint, or team evidence could exit a confirmed stop using nothing but a SET PIECES tag
+    # window -- the exact bug this decision was meant to fix. Checked here, against the real
+    # tagging config if the caller supplied one, so the two can't silently drift back into
+    # collision (e.g. someone raising tagging.restart_strength without noticing this coupling).
+    tagging_restart_strength = (config or {}).get("tagging", {}).get("restart_strength", 0.5)
+    if settings.restart_evidence_threshold <= tagging_restart_strength:
+        raise ValueError(
+            "state_machine.restart_evidence_threshold ({}) must be strictly greater than "
+            "tagging.restart_strength ({}), or a bare tag window alone could exit a confirmed "
+            "stop".format(settings.restart_evidence_threshold, tagging_restart_strength))
+
     half = np.asarray(match.half)
     _validate_alignment(match, features, priors, half)
     n = len(half)

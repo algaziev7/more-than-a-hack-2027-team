@@ -260,6 +260,57 @@ class StateMachineTests(unittest.TestCase):
         # Well past it: must eventually have left D despite zero restart/live-motion proof ever.
         self.assertIn(A, labels[150:], "sustained team evidence must eventually override the latch")
 
+    def test_stray_dead_blip_during_live_play_does_not_delay_an_unrelated_turnover(self):
+        """A fourth review found that `dead_confirmed` can latch while `current_state` is
+        already H/A -- a single is_dead frame that never reaches dead_dwell_frames sets it
+        regardless of current state. If a live-motion confirmation later arrives mid-turnover,
+        clearing that stale latch was wiping the turnover's progress even though it was never
+        actually gated (current_state wasn't D when the turnover started). Reproduced
+        independently before trusting the report (H->A delayed from frame 45 to 54). Fixed: the
+        progress is only discarded when `current_state == D` at the moment the gate lifts.
+        """
+        n = 70
+        features, priors = _establish_home(n)
+        stray_blip = 30  # looks momentarily dead, but never reaches dead_dwell_frames
+        priors.dead_evidence[stray_blip] = 0.9
+        priors.dead_reliability[stray_blip] = 0.5
+        turnover = slice(31, 70)
+        features.team_evidence[turnover] = [0.05, 0.95]
+        features.team_reliability[turnover] = 0.9
+        live_motion_confirmation = 40  # unrelated to the turnover; just happens to land inside it
+        priors.dead_evidence[live_motion_confirmation] = 0.1
+        priors.dead_reliability[live_motion_confirmation] = 0.5
+        labels = _run(_match(n), features, priors)
+        # 31 + team_dwell_frames(15) - 1 = 45: on schedule, not delayed by the stray blip.
+        self.assertTrue(np.all(labels[31:45] == H), labels[31:45])
+        self.assertTrue(np.all(labels[45:] == A), labels[45:])
+
+    def test_latch_does_not_survive_a_safety_valve_exit_into_a_later_turnover(self):
+        """Companion to the above: the latch must not persist past the D period it belongs to
+        either. A safety-valve exit (sustained evidence, no real restart proof) must clear it,
+        so a later, unrelated turnover with its own live-motion-confirmation frame isn't delayed
+        by a stale latch left over from the stop before it.
+        """
+        n = 250
+        features, priors = _establish_home(n)
+        confirmed_stop = slice(0, 20)
+        priors.dead_evidence[confirmed_stop] = 0.9
+        priors.dead_reliability[confirmed_stop] = 0.5
+        # No restart/live proof ever -- H only returns via the safety valve, well after frame 95.
+        features.team_evidence[20:150] = [0.95, 0.05]
+        features.team_reliability[20:150] = 0.9
+        labels_before_turnover = _run(_match(n), features, priors).copy()
+        self.assertIn(H, labels_before_turnover[95:150], "the safety valve must have fired by here")
+
+        turnover = slice(150, 250)
+        features.team_evidence[turnover] = [0.05, 0.95]
+        features.team_reliability[turnover] = 0.9
+        live_motion_confirmation = 160  # unrelated; just happens to land inside the turnover
+        priors.dead_evidence[live_motion_confirmation] = 0.1
+        priors.dead_reliability[live_motion_confirmation] = 0.5
+        labels = _run(_match(n), features, priors)
+        self.assertTrue(np.all(labels[164:] == A), labels[164:])
+
     def test_ordinary_kickoff_is_unaffected_by_the_restart_gate(self):
         """Decision 6 only gates leaving a *confirmed* stop. The half-start default D (nothing
         has ever confirmed a stop -- an ordinary kickoff) is untouched: team evidence alone still

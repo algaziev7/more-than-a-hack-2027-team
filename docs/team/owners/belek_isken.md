@@ -112,8 +112,19 @@ Two further rounds of review on that same fix, both caught before reaching anyon
   instant the gate lifted, and an over-broad reset that also wiped unrelated pending D-progress)
   before either reached anyone. Full history in the decision doc's two amendments to Decision 6.
 
-Real match, after all three rounds: `D` share moved 6,384 -> 10,883 -> 63,518 -> 7,514 across the
+Real match, after three rounds: `D` share moved 6,384 -> 10,883 -> 63,518 -> 7,514 across the
 fixes -- each swing explainable by the mechanism just fixed, not noise.
+
+A fourth review then found the second amendment's own fix was still too broad: `dead_confirmed`
+can latch True while `current_state` is already H/A (a stray `is_dead` frame that never reached
+`dead_dwell_frames`), and clearing it later was wiping an ordinary, never-gated turnover's
+progress -- delaying an unrelated H->A change by 9 frames in their repro. Reproduced
+independently before trusting it. Fixed: the discard now requires `current_state == D` at that
+moment (the candidate was actually subject to the gate), and `dead_confirmed` is explicitly
+cleared the instant a transition leaves `D`, so a stale latch from a previous stop can't
+resurface against a later, unrelated turnover either. Third amendment in the decision doc; this
+one didn't move the real-match label counts (placeholder features have zero team reliability
+everywhere, so the scenario this fixes can't occur without real tracking evidence yet).
 
 ### Next exact action
 
@@ -127,17 +138,19 @@ don't treat as fixed constants" framing.
 
 - Changed files: `possession/state_machine.py`, `tests/test_state_machine.py`,
   `tests/e2_scenarios.py`, `tests/test_state_machine_validation.py`, the decision doc.
-- Reference: PR #6 (merged PR #7 into it), plus three follow-up commits for Decision 6 and its
-  two amendments, on `e2/state-v1` -- not yet merged to `main`.
-- Verification: `python -m unittest discover -s tests` -- 137/137 pass (132 + 5 new for Decision
+- Reference: PR #6 (merged PR #7 into it), plus four follow-up commits for Decision 6 and its
+  three amendments, on `e2/state-v1` -- not yet merged to `main`.
+- Verification: `python -m unittest discover -s tests` -- 139/139 pass (132 + 7 new for Decision
   6 and its amendments). Real-match smoke test as above.
 - Untested: anything against real E4 features; only a neutral placeholder so far.
 - Interface changes: `StateMachineConfig` gained `restart_evidence_threshold`,
   `live_confirmed_threshold`, and `latched_team_dwell_s` (all validated, all documented in
   Decision 6 and its amendments).
 - Decision: team evidence must never be the sole proof a stop ended, except after a much longer
-  wait than normal (the safety valve) so the latch can never freeze a half indefinitely;
-  thresholds for "what counts as proof" are judgement calls, documented as such, not data-derived.
+  wait than normal (the safety valve) so the latch can never freeze a half indefinitely; the
+  latch only ever gates a candidate that was actually live while `current_state == D`, never a
+  stray reading from an unrelated moment. Thresholds for "what counts as proof" are judgement
+  calls, documented as such, not data-derived.
 - Next task: wire in real features; revisit dwell/threshold defaults, including
   `latched_team_dwell_s`, once real `D`-spell-length data exists.
 - Help needed: E4 review of the fusion/threshold logic generally; Almaz/E3 on how often real

@@ -325,13 +325,20 @@ def decode(match, features, priors, config=None) -> Prediction:
             dead_confirmed = True
         if exit_dead_ok[i] and dead_confirmed:
             dead_confirmed = False
-            if pending_state in (H, A):
-                # The gate just lifted. Discard team-candidate progress accumulated while gated
-                # (toward latched_team_dwell_frames) rather than letting it carry over toward the
-                # now-applicable, much shorter team_dwell_frames -- otherwise a long-accumulated
-                # "banked" run of mere proximity could cash in the instant a single frame of real
-                # proof arrives, which would undercut exactly what that proof is meant to require.
-                # A pending D-candidate (unrelated to the gate) is untouched.
+            if pending_state in (H, A) and current_state == D:
+                # The gate just lifted on a candidate that was actually subject to it. Discard
+                # that progress (accumulated toward latched_team_dwell_frames) rather than
+                # letting it carry over toward the now-applicable, much shorter
+                # team_dwell_frames -- otherwise a long-accumulated "banked" run of mere
+                # proximity could cash in the instant a single frame of real proof arrives,
+                # which would undercut exactly what that proof is meant to require.
+                #
+                # The current_state == D guard matters: is_dead can latch dead_confirmed even
+                # while current_state is already H/A (a lone dead-looking frame during live play
+                # that never reached dead_dwell_frames) -- without this guard, a later
+                # exit_dead_ok frame would wipe an ordinary, never-gated turnover's progress for
+                # no reason. A pending D-candidate is never touched here either way -- entering D
+                # was never gated by this latch, only leaving it.
                 pending_state, pending_count = None, 0
 
         this_candidate = candidate[i]
@@ -369,6 +376,13 @@ def decode(match, features, priors, config=None) -> Prediction:
                 "from_state": current_state, "to_state": this_candidate,
                 "reason": "{} decisive occurrences for the new candidate".format(pending_count),
             })
+            if current_state == D and this_candidate != D:
+                # Leaving D, whether via real proof or the safety valve -- don't carry a latch
+                # into the live period that follows. Left set, a later stray is_dead frame would
+                # have nothing to do (current_state isn't D), but a later exit_dead_ok frame
+                # would still see dead_confirmed True from here and could wipe an unrelated,
+                # never-gated turnover's progress, same failure mode as the guard just above.
+                dead_confirmed = False
             current_state = this_candidate
             pending_state, pending_count = None, 0
 

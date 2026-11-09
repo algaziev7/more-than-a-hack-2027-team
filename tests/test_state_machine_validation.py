@@ -64,7 +64,11 @@ def grouped_reference(symbols, half, team_required, dead_required, latched_requi
                 dead_confirmed = True
             elif symbol == "R" and dead_confirmed:
                 dead_confirmed = False
-                if pending_symbol in ("H", "A"):
+                # Only discard a candidate that was actually subject to the gate -- a single D
+                # observation can latch dead_confirmed without state ever becoming "D" (it never
+                # reached dead_required), so without the state == "D" guard, a later R would
+                # wipe an ordinary, never-gated run's progress for no reason.
+                if pending_symbol in ("H", "A") and state == "D":
                     pending_symbol, pending_count = None, 0
 
             candidate = symbol if symbol in "HAD" else None
@@ -84,6 +88,9 @@ def grouped_reference(symbols, half, team_required, dead_required, latched_requi
             else:
                 required = team_required
             if pending_count >= required:
+                if state == "D" and candidate != "D":
+                    # Leaving D: don't carry a stale latch into the live period that follows.
+                    dead_confirmed = False
                 state = candidate
                 pending_symbol, pending_count = None, 0
             labels[i] = state

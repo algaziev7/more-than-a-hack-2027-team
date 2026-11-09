@@ -267,6 +267,26 @@ on malformed input and duplicating `TaggingConfig`'s own default instead of aski
 `_section(config, "tagging", TaggingConfig)`, the same helper every other config lookup in this
 module already uses.
 
+### Third amendment — the "wrong scope" fix from the second amendment was still too broad
+
+A fourth review found that the `pending_state in (H, A)` guard added above wasn't quite right
+either: `dead_confirmed` can latch True even while `current_state` is already `H`/`A` — a single
+`is_dead` frame sets it unconditionally (Decision 5's reasoning: it already carries E3's own
+confirmed opinion), regardless of what `current_state` happens to be at that moment. If that
+stray latch then gets cleared later by a genuine `exit_dead_ok` frame that lands in the middle of
+an ordinary, never-gated turnover, the guard as written still discarded that turnover's progress
+— delaying a completely unrelated H→A change by however many frames it had already accumulated.
+Reproduced independently before trusting it: establish `H`; one `is_dead` frame that never
+reaches `dead_dwell_frames` (so `current_state` stays `H`); then a genuine, sustained turnover to
+`A` with one `exit_dead_ok` frame inside it — the turnover landed 9 frames late.
+
+Fixed with two changes: the discard only fires when `current_state == D` at that moment (the
+candidate was actually subject to the gate, not merely latched-but-irrelevant); and
+`dead_confirmed` is now explicitly cleared the moment a transition actually leaves `D` for `H`/`A`
+(whether via real proof or the safety valve), so a stale latch from a *previous* `D` period can't
+resurface and interfere with a *later*, unrelated turnover either. Both paths now have dedicated
+regression tests.
+
 ## Explicitly deferred (not forgotten, not yet needed)
 
 - No vectorization of the per-frame loop — 199k frames is cheap in plain Python; confirmed at

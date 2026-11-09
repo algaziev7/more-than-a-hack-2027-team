@@ -44,7 +44,7 @@ caller passes the *whole* shared pipeline dict, and this module reads only its o
 `config["state_machine"]` section, so Goblin's pipeline can pass one config object to every stage.
 """
 
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from numbers import Real
 import math
 
@@ -63,6 +63,8 @@ class StateMachineConfig:
     not a free safety margin -- treat these as something to revisit, not fixed constants.
     """
 
+    # decode uses match.fps. Kept as a fallback for legacy lightweight fixtures;
+    # an explicit config fps must agree with a match that supplies its own fps.
     fps: float = 25.0
 
     # Hysteresis: occurrences (not necessarily consecutive, see Decision 3) a candidate needs
@@ -88,14 +90,18 @@ class StateMachineConfig:
             raise ValueError("state_machine.fps must be positive")
         if min(self.dead_dwell_s, self.team_dwell_s) <= 0:
             raise ValueError("dwell durations must be positive")
+        for name in ("dead_threshold", "dead_reliability_min", "restart_weight",
+                     "team_margin_threshold", "team_reliability_min"):
+            if not 0 <= getattr(self, name) <= 1:
+                raise ValueError("state_machine.{} must be in [0, 1]".format(name))
 
     @property
     def dead_dwell_frames(self) -> int:
-        return max(1, round(self.dead_dwell_s * self.fps))
+        return max(1, math.ceil(self.dead_dwell_s * self.fps))
 
     @property
     def team_dwell_frames(self) -> int:
-        return max(1, round(self.team_dwell_s * self.fps))
+        return max(1, math.ceil(self.team_dwell_s * self.fps))
 
 
 def _section(config, name, cls):
@@ -131,6 +137,35 @@ def _combine(evidence_a, reliability_a, evidence_b, reliability_b):
     )
     combined_reliability = np.minimum(1.0, total)
     return combined_evidence, combined_reliability
+
+
+def _validate_alignment(match, features, priors, half):
+    """Reject cross-module timeline mismatches before NumPy can broadcast them.
+
+    Constructors validate each contract separately, not their joint length or
+    alignment. Keep support for lightweight fixtures without imposing a second
+    type/schema system; check only the arrays consumed here and available axes.
+    """
+    if half.ndim != 1:
+        raise ValueError("match.half must be one-dimensional")
+    n = len(half)
+    if hasattr(match, "frame") and np.shape(match.frame) != (n,):
+        raise ValueError("match.frame and match.half must use the same timeline")
+    if hasattr(features, "frame"):
+        if np.shape(features.frame) != (n,):
+            raise ValueError("features.frame must match the match timeline length")
+        if hasattr(match, "frame") and not np.array_equal(features.frame, match.frame):
+            raise ValueError("features and match must use the same frame timeline")
+    for owner, source, names in (
+        ("features", features, ("team_evidence", "team_reliability")),
+        ("priors", priors, ("dead_evidence", "dead_reliability", "restart_evidence",
+                            "tag_team_evidence", "tag_team_reliability")),
+    ):
+        for name in names:
+            expected = (n, 2) if name in ("team_evidence", "tag_team_evidence") else (n,)
+            if np.shape(getattr(source, name)) != expected:
+                raise ValueError("{}.{} must have shape {} on the match timeline".format(
+                    owner, name, expected))
 
 
 def _decisive_state_per_frame(features, priors, config: StateMachineConfig) -> np.ndarray:
@@ -174,9 +209,18 @@ def decode(match, features, priors, config=None) -> Prediction:
     `config` is the shared pipeline dict (see `_section`), e.g. `{"state_machine": {...}}`, not a
     `StateMachineConfig` directly -- matching how `dead_ball.build_priors` and
     `tagging.build_tagging_priors` take `config`.
+
+    Dwell requires ceil(seconds * match.fps) supporting observations. Defaults
+    at 25 fps are unchanged. An explicit legacy `state_machine.fps` must match
+    `match.fps`; only lightweight inputs without fps use the config fallback.
     """
     settings = _section(config, "state_machine", StateMachineConfig)
+    if hasattr(match, "fps"):
+        if "fps" in (config or {}).get("state_machine", {}) and settings.fps != match.fps:
+            raise ValueError("state_machine.fps must agree with match.fps")
+        settings = replace(settings, fps=match.fps)
     half = np.asarray(match.half)
+    _validate_alignment(match, features, priors, half)
     n = len(half)
 
     candidate = _decisive_state_per_frame(features, priors, settings)

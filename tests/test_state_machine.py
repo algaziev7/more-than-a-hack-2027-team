@@ -178,7 +178,10 @@ class StateMachineTests(unittest.TestCase):
         Play is confirmed stopped. The stop signal then simply goes quiet (tag window ended, no
         opinion either way) -- NOT confirmed live -- while a player happens to stand near the
         ball the whole time, waiting to take the throw. Team proximity alone must not read as
-        "that team has it": the throw hasn't been taken, there's no proof play resumed.
+        "that team has it": the throw hasn't been taken, there's no proof play resumed. This
+        sequence is well under the safety-valve threshold (latched_team_dwell_frames, ~75 frames
+        by default) -- see test_sustained_team_evidence_eventually_overrides_an_unresolved_stop
+        for what happens if proximity alone persists far longer than that.
         """
         n = 60
         features, priors = _establish_home(n)
@@ -227,6 +230,35 @@ class StateMachineTests(unittest.TestCase):
         features.team_reliability[25:] = 0.8
         labels = _run(_match(n), features, priors)
         self.assertTrue(np.all(labels == D), labels)
+
+    def test_sustained_team_evidence_eventually_overrides_an_unresolved_stop(self):
+        """A third review found that the latch, as first written, had no expiry at all: E3's own
+        escape path needs a usable ball, and an occlusion (41% of graded frames, in clusters)
+        also wipes its recent-stop context -- so a restart happening during an occlusion, with
+        tracking still ambiguous once the ball reappears, could pin D indefinitely. Reproduced
+        independently with the reviewer's own repro before trusting it (920 frames / ~37s stuck).
+
+        Fix: sustained, reliable team evidence can still exit a latched D, but only after
+        latched_team_dwell_frames -- several times longer than an ordinary team change needs,
+        which is exactly what makes it categorically different from Almaz's brief-proximity case
+        above rather than a backdoor around it.
+        """
+        n = 200
+        features, priors = _establish_home(n)
+        confirmed_stop = slice(0, 20)
+        priors.dead_evidence[confirmed_stop] = 0.9
+        priors.dead_reliability[confirmed_stop] = 0.5
+        unresolved = slice(20, 200)
+        priors.dead_evidence[unresolved] = 0.5
+        priors.dead_reliability[unresolved] = 0.0
+        priors.restart_evidence[unresolved] = 0.0
+        features.team_evidence[unresolved] = [0.05, 0.95]
+        features.team_reliability[unresolved] = 0.9
+        labels = _run(_match(n), features, priors)
+        # Well short of the ~75-frame safety valve: must still be waiting, not have given up.
+        self.assertTrue(np.all(labels[20:90] == D), labels[20:90])
+        # Well past it: must eventually have left D despite zero restart/live-motion proof ever.
+        self.assertIn(A, labels[150:], "sustained team evidence must eventually override the latch")
 
     def test_ordinary_kickoff_is_unaffected_by_the_restart_gate(self):
         """Decision 6 only gates leaving a *confirmed* stop. The half-start default D (nothing

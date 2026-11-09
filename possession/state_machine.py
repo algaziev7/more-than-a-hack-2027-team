@@ -45,6 +45,10 @@ docs/team/decisions/2026-10-23-e2-data-evidence-and-state-machine-design.md. Sum
   otherwise read as "that player's team now has it." This keeps "is play live" and "who has it"
   as genuinely separate questions, per TEAM_PLAN.md. It never affects a `D` that's merely the
   half-start default (nothing has ever confirmed a stop), so an ordinary kickoff is unaffected.
+  A safety valve (same decision, amended once the indefinite-freeze risk was demonstrated, not
+  just theorized): sustained team evidence can still exit a latched `D`, but only after
+  `latched_team_dwell_s` -- several times longer than an ordinary team change needs -- precisely
+  because that length is what makes it categorically different from brief proximity.
 
 `config` follows the same convention as `dead_ball.DeadBallConfig` / `tagging.TaggingConfig`: the
 caller passes the *whole* shared pipeline dict, and this module reads only its own
@@ -58,6 +62,7 @@ import math
 import numpy as np
 
 from possession.contracts import Prediction
+from possession.tagging import TaggingConfig
 
 # Params
 H, A, D, X = "H", "A", "D", "X"
@@ -104,6 +109,16 @@ class StateMachineConfig:
     live_confirmed_threshold: float = 0.3     # priors.dead_evidence this low (and reliable) counts
                                                # as E3's own confirmed live-motion signal (~0.1)
 
+    # Safety valve: without this, the latch has no expiry at all. E3's own escape path (live-
+    # motion or restart confirmation) needs a *usable* ball, and every unusable-ball frame also
+    # wipes dead_ball's recent-stop context -- so a restart that happens to occur during an
+    # occlusion (41% of graded frames, in clusters) could otherwise pin D indefinitely, even
+    # against overwhelming team evidence. Demonstrated, not just theorized: 920 frames (~37s)
+    # stuck in D in a synthetic repro before this field existed. Several times team_dwell_s on
+    # purpose -- that length is what makes "sustained team evidence won" categorically different
+    # from the brief proximity Decision 6 exists to ignore (Almaz's throw-in case).
+    latched_team_dwell_s: float = 3.0   # ~75 frames
+
     def __post_init__(self):
         for field_ in fields(self):
             value = getattr(self, field_.name)
@@ -111,7 +126,7 @@ class StateMachineConfig:
                 raise ValueError("state_machine.{} must be a finite number".format(field_.name))
         if self.fps <= 0:
             raise ValueError("state_machine.fps must be positive")
-        if min(self.dead_dwell_s, self.team_dwell_s) <= 0:
+        if min(self.dead_dwell_s, self.team_dwell_s, self.latched_team_dwell_s) <= 0:
             raise ValueError("dwell durations must be positive")
         for name in ("dead_threshold", "dead_reliability_min", "restart_weight",
                      "team_margin_threshold", "team_reliability_min",
@@ -126,6 +141,10 @@ class StateMachineConfig:
     @property
     def team_dwell_frames(self) -> int:
         return max(1, math.ceil(self.team_dwell_s * self.fps))
+
+    @property
+    def latched_team_dwell_frames(self) -> int:
+        return max(1, math.ceil(self.latched_team_dwell_s * self.fps))
 
 
 def _section(config, name, cls):
@@ -255,9 +274,12 @@ def decode(match, features, priors, config=None) -> Prediction:
     # Decision 6's restart_evidence_threshold must stay strictly above tagging's bare restart
     # hint, or team evidence could exit a confirmed stop using nothing but a SET PIECES tag
     # window -- the exact bug this decision was meant to fix. Checked here, against the real
-    # tagging config if the caller supplied one, so the two can't silently drift back into
-    # collision (e.g. someone raising tagging.restart_strength without noticing this coupling).
-    tagging_restart_strength = (config or {}).get("tagging", {}).get("restart_strength", 0.5)
+    # tagging config if the caller supplied one (via the same _section helper tagging.py's own
+    # build_tagging_priors uses, so a malformed section is rejected the same way, not with a
+    # bare dict .get() that would raise the wrong exception type on bad input), so the two can't
+    # silently drift back into collision (e.g. someone raising tagging.restart_strength without
+    # noticing this coupling).
+    tagging_restart_strength = _section(config, "tagging", TaggingConfig).restart_strength
     if settings.restart_evidence_threshold <= tagging_restart_strength:
         raise ValueError(
             "state_machine.restart_evidence_threshold ({}) must be strictly greater than "
@@ -301,15 +323,18 @@ def decode(match, features, priors, config=None) -> Prediction:
 
         if is_dead[i]:
             dead_confirmed = True
-        if exit_dead_ok[i]:
+        if exit_dead_ok[i] and dead_confirmed:
             dead_confirmed = False
+            if pending_state in (H, A):
+                # The gate just lifted. Discard team-candidate progress accumulated while gated
+                # (toward latched_team_dwell_frames) rather than letting it carry over toward the
+                # now-applicable, much shorter team_dwell_frames -- otherwise a long-accumulated
+                # "banked" run of mere proximity could cash in the instant a single frame of real
+                # proof arrives, which would undercut exactly what that proof is meant to require.
+                # A pending D-candidate (unrelated to the gate) is untouched.
+                pending_state, pending_count = None, 0
 
         this_candidate = candidate[i]
-        if this_candidate in (H, A) and current_state == D and dead_confirmed:
-            # A real stop was confirmed and nothing has proven play resumed since -- a player
-            # merely being near the ball is not that proof (Decision 6). Treat as no decisive
-            # signal, same as a gap: paused, not reset.
-            this_candidate = None
         if this_candidate is None:
             # Decision 3: no decisive signal this frame -- pause the count, don't reset it. The
             # ball is missing on 41% of graded frames, in clusters; resetting here would make a
@@ -327,7 +352,17 @@ def decode(match, features, priors, config=None) -> Prediction:
         else:
             pending_state, pending_count = this_candidate, 1
 
-        required = settings.dead_dwell_frames if this_candidate == D else settings.team_dwell_frames
+        if this_candidate == D:
+            required = settings.dead_dwell_frames
+        elif current_state == D and dead_confirmed:
+            # Decision 6's safety valve: a confirmed stop needs independent proof it ended, but
+            # team evidence alone can still override after much longer -- long enough to be
+            # categorically different from the brief proximity Decision 6 exists to ignore, and
+            # bounded so the latch can never pin D indefinitely if E3's own escape path can't
+            # fire (e.g. a restart that happens to occur during an occlusion).
+            required = settings.latched_team_dwell_frames
+        else:
+            required = settings.team_dwell_frames
         if pending_count >= required:
             transitions.append({
                 "frame": int(match.frame[i]) if hasattr(match, "frame") else i,

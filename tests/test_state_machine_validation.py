@@ -21,7 +21,7 @@ from possession.state_machine import decode
 from tests.e2_scenarios import TIMING_CASES, evidence_sequence, label_transitions, measure_timing
 
 
-def grouped_reference(symbols, half, team_required, dead_required):
+def grouped_reference(symbols, half, team_required, dead_required, latched_required=None):
     """Independent re-derivation of the decode() policy from its prose description.
 
     Through 2026-11-08 this was a purely declarative "group runs, check each run's own length,
@@ -38,7 +38,19 @@ def grouped_reference(symbols, half, team_required, dead_required):
     less structurally different from production than the original design, but still a second,
     independently-authored implementation of the same prose spec, which is what actually matters
     for catching a transcription or off-by-one error in either one.
+
+    `latched_required` (Decision 6's safety valve, added after a later review demonstrated the
+    latch could otherwise pin D indefinitely): while gated, an H/A candidate still accumulates,
+    but against this much longer requirement instead of team_required. The moment R lifts the
+    gate, any *team*-candidate progress accumulated under that longer requirement is discarded
+    (re-derived independently from the same reasoning as production's: letting it carry over
+    toward the now-much-shorter team_required would let a long "banked" run of mere proximity
+    cash in the instant a single frame of real proof arrives) -- a pending D-candidate, unrelated
+    to the gate, is untouched. Defaults to `team_required` (no safety valve distinguishable from
+    ordinary gating) when omitted, for callers that don't exercise it.
     """
+    if latched_required is None:
+        latched_required = team_required
     labels = ["X"] * len(symbols)
     for half_id, indices in groupby(range(len(symbols)), key=lambda i: half[i]):
         indices = list(indices)
@@ -50,13 +62,12 @@ def grouped_reference(symbols, half, team_required, dead_required):
             symbol = symbols[i]
             if symbol == "D":
                 dead_confirmed = True
-            elif symbol == "R":
+            elif symbol == "R" and dead_confirmed:
                 dead_confirmed = False
+                if pending_symbol in ("H", "A"):
+                    pending_symbol, pending_count = None, 0
 
             candidate = symbol if symbol in "HAD" else None
-            if candidate in ("H", "A") and state == "D" and dead_confirmed:
-                candidate = None  # Decision 6: not proof play resumed, treat as no signal
-
             if candidate is None:
                 labels[i] = state
                 continue
@@ -66,7 +77,12 @@ def grouped_reference(symbols, half, team_required, dead_required):
                 continue
             pending_count = pending_count + 1 if candidate == pending_symbol else 1
             pending_symbol = candidate
-            required = dead_required if candidate == "D" else team_required
+            if candidate == "D":
+                required = dead_required
+            elif state == "D" and dead_confirmed:
+                required = latched_required
+            else:
+                required = team_required
             if pending_count >= required:
                 state = candidate
                 pending_symbol, pending_count = None, 0
@@ -185,11 +201,15 @@ class StateMachineValidationTests(unittest.TestCase):
 
     def test_exhaustive_short_sequences_against_offline_grouped_reference(self):
         # 5,461 sequences, including empty; neutral gaps keep their frame offsets.
+        # latched_required=75 matches state_machine's actual default latched_team_dwell_frames
+        # (not overridden by this config) -- unreachable within length <= 6 either way, kept
+        # explicit so this doesn't silently rely on the oracle's own default being coincidentally
+        # equivalent to "no safety valve, same as ordinary gating" (team_required, 3).
         config = {"state_machine": {"team_dwell_s": .12, "dead_dwell_s": .08}}
         for length in range(7):
             for symbols in product("HAD.", repeat=length):
                 result = decode(*evidence_sequence(symbols), config)
-                expected = grouped_reference(symbols, [1] * length, 3, 2)
+                expected = grouped_reference(symbols, [1] * length, 3, 2, latched_required=75)
                 self.assertEqual(result.labels.tolist(), expected, "".join(symbols))
 
     def test_seeded_half_sequences_against_reference(self):
@@ -199,7 +219,8 @@ class StateMachineValidationTests(unittest.TestCase):
             symbols = rng.choice(list("HAD.R"), 80).tolist()
             half = [1] * 35 + [0] * 5 + [2] * 40
             result = decode(*evidence_sequence(symbols, half=half), config)
-            self.assertEqual(result.labels.tolist(), grouped_reference(symbols, half, 3, 2), sample)
+            expected = grouped_reference(symbols, half, 3, 2, latched_required=75)
+            self.assertEqual(result.labels.tolist(), expected, sample)
 
     def test_team_swap_symmetry_with_conflicting_geometry_and_tags(self):
         rng = np.random.default_rng(42)
@@ -224,7 +245,12 @@ class StateMachineValidationTests(unittest.TestCase):
 
     def test_repeated_calls_preserve_inputs_and_config(self):
         inputs = evidence_sequence("H" * 30 + "D" * 10 + "A" * 30)
-        config = {"state_machine": {"team_dwell_s": .2}, "tagging": {"enabled": False}}
+        # "enabled" is a dead_ball.DeadBallConfig field, not TaggingConfig's -- decode() now
+        # validates the tagging section strictly (Decision 6's restart-threshold guard), so this
+        # uses a real TaggingConfig field instead of one that only ever worked by accident. Kept
+        # below state_machine's default restart_evidence_threshold (0.6), which that same guard
+        # requires.
+        config = {"state_machine": {"team_dwell_s": .2}, "tagging": {"restart_strength": .4}}
         before = deepcopy((inputs, config))
         first = decode(*inputs, config)
         decode(*evidence_sequence("A" * 20))

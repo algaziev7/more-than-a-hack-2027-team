@@ -228,13 +228,44 @@ written, before either was merged further:
    on 41% of graded frames, in clusters. Without a recent stop, E3 only confirms live motion via
    `control` (strong, reliable team evidence) — so a stop followed by an occluded restart, with
    tracking still ambiguous once the ball reappears, could leave the latch set, and every
-   subsequent H/A frame suppressed, for an unbounded stretch. Not fixed yet, on purpose: the
-   reviewer flagged this at medium confidence precisely because it depends on real-data rates
-   nobody can see without E4's features (unlike finding 1, which was independent of any such
-   rate). Guessing a bound now would be exactly the mistake EVALUATION.md warns against —
-   picking a number with no real signal to justify it. Revisit once real features exist: measure
-   actual `D`-spell lengths, then decide whether a bound (e.g. expiring the latch after some
-   multiple of `team_dwell_frames` with zero exit-evidence) is actually needed.
+   subsequent H/A frame suppressed, for an unbounded stretch. Left open at first, deliberately —
+   a third review then demonstrated it rather than just theorizing it (below), which changed the
+   calculus from "needs real data to size a bound" to "needs *a* bound, size is secondary."
+
+### Second amendment — a third review demonstrated the unbounded latch is a real failure, not just a risk
+
+A third review (another session, independent of the second) gave a concrete repro rather than a
+theoretical concern: confirmed stop on frames 50-80, then 920 frames (~37s) of neutral dead
+evidence with strong, reliable team evidence the whole time — labels stayed `D` for all 920
+frames, with *zero* chance of ever leaving, no matter how long the sequence ran. Reproduced
+independently before trusting it. That changed this from "revisit once real data exists" to
+"this needs a bound regardless of the exact real-world rate," since an unconditionally unbounded
+freeze is a severe failure mode on its own terms, not something only real-data tuning can reveal.
+
+**Fix: a safety valve, not a guessed expiry.** Sustained, reliable team evidence can still exit a
+latched `D`, but only after `latched_team_dwell_s` (3.0s / ~75 frames by default) — several times
+`team_dwell_s`, deliberately, so that length itself is what makes "team evidence won" categorically
+different from the brief proximity Decision 6 exists to ignore, rather than a backdoor around it.
+This reuses Decision 3's existing pause-not-reset dwell machinery; it's the same mechanism with a
+different, longer threshold while `dead_confirmed` is latched, not new machinery.
+
+**Two more bugs, both self-found while implementing that valve, both fixed before anything was
+shared:**
+- *Banking exploit.* The first implementation let team-candidate progress accumulated while
+  gated (toward the long threshold) carry over once the gate lifted, suddenly counting toward the
+  now-much-shorter `team_dwell_frames` — so a long run of mere proximity could cash in instantly
+  the moment a single frame of real proof arrived, undercutting the whole point of requiring that
+  proof. Fixed: that progress is discarded the moment `exit_dead_ok` actually clears the latch.
+- *Wrong scope.* The fix for the above, as first written, discarded *any* pending candidate on
+  that same frame — including an unrelated pending `D`-confirmation that happened to be in
+  progress, which has nothing to do with the team-evidence gate. Fixed: only a pending `H`/`A`
+  candidate is discarded; a pending `D` candidate is untouched.
+
+Also fixed in the same pass, lower severity but real: the `tagging.restart_strength` cross-check
+(finding 1's fix) read the raw config dict with a bare `.get()`, raising the wrong exception type
+on malformed input and duplicating `TaggingConfig`'s own default instead of asking it. Switched to
+`_section(config, "tagging", TaggingConfig)`, the same helper every other config lookup in this
+module already uses.
 
 ## Explicitly deferred (not forgotten, not yet needed)
 

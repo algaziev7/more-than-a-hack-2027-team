@@ -70,3 +70,14 @@ env/
 /.env
 /.env.*
 !/.env.example
+
+# Numeric caches and copied restricted bundles belong in local directories.
+*.npz
+*.npy
+*.pkl
+*.pickle
+*.mov
+*.mkv
+*_atd.txt
+*_atd.xml
+*_smart_tagging.xml

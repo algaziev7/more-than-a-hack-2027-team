@@ -1,7 +1,7 @@
 import copy
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -243,6 +243,20 @@ class DataTests(unittest.TestCase):
                        {'state': {1: 'value'}}):
             with self.subTest(config=config), self.assertRaises(ValueError):
                 validate_config(config)
+
+    def test_config_path_policy_is_independent_of_host_os(self):
+        # Simulate either host's Path semantics without accessing the filesystem.
+        for host_path in (PurePosixPath, PureWindowsPath):
+            with patch('possession.data.Path', host_path):
+                for value in ('/private/local', 'C:/private/local',
+                              r'C:\private\local', r'\\server\share\local'):
+                    with self.subTest(host=host_path.__name__, value=value):
+                        with self.assertRaisesRegex(ValueError, 'local absolute paths'):
+                            validate_config({'model': {'paths': [value]}})
+                config = {'model': {'paths': ['models/local', r'models\local'],
+                                    'name': 'distance'}, 'data': {'cache': True}}
+                with self.subTest(host=host_path.__name__, relative=True):
+                    self.assertEqual(validate_config(config), config)
 
 
 if __name__ == '__main__':

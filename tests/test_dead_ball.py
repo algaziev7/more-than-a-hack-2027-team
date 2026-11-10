@@ -341,6 +341,95 @@ class DeadBallTests(unittest.TestCase):
         assert_neutral(priors)
 
 
+class MissingGapTests(unittest.TestCase):
+    config = {"dead_ball": {"max_missing_gap_s": .2}}
+
+    @staticmethod
+    def missing(match, frames):
+        match.ball_xy_m[frames] = np.nan
+        match.ball_observed[frames] = False
+        match.ball_speed_mps[frames] = np.nan
+
+    def test_short_gap_preserves_support_but_contributes_no_evidence(self):
+        match = match_input(tagged=True)
+        self.missing(match, [3, 4])
+        prior = build_priors(match, config=self.config)
+        assert_neutral(prior, slice(0, 7))
+        self.assertEqual(prior.dead_evidence[7], .9)  # Six observed candidates.
+        assert_neutral(build_priors(match), slice(0, 10))
+
+    def test_repeated_short_gaps_cannot_bank_unbounded_support(self):
+        match = match_input(n=30, tagged=True)
+        self.missing(match, list(range(1, 30, 2)))
+        assert_neutral(build_priors(match, config=self.config))
+
+    def test_long_gap_resets_pending_and_confirmed_context(self):
+        match = motion_after_stop()
+        self.missing(match, [6, 7, 8])
+        prior = build_priors(match, config=self.config)
+        assert_neutral(prior, slice(6, None))
+        self.assertFalse(np.any(prior.diagnostic_flags & CONFIRMED_RESTART))
+
+    def test_short_gap_allows_one_restart_after_fresh_motion_confirmation(self):
+        match = motion_after_stop()
+        self.missing(match, [6])
+        prior = build_priors(match, config=self.config)
+        assert_neutral(prior, slice(6, 8))
+        np.testing.assert_array_equal(np.flatnonzero(prior.diagnostic_flags & CONFIRMED_RESTART), [8])
+
+    def test_missing_ball_alone_never_confirms_stop(self):
+        match = match_input(tagged=True)
+        self.missing(match, list(range(2, 12)))
+        assert_neutral(build_priors(match, config=self.config))
+
+    def test_relocated_still_ball_does_not_join_old_stop_support(self):
+        match = match_input(tagged=True)
+        self.missing(match, [3])
+        match.ball_xy_m[4:, 0] += 2.
+        prior = build_priors(match, config=self.config)
+        assert_neutral(prior, slice(0, 9))
+        self.assertEqual(prior.dead_evidence[9], .9)
+
+    def test_rejected_observed_ball_is_not_treated_as_occlusion(self):
+        match = match_input(tagged=True)
+        match.ball_speed_mps[3] = 100.
+        prior = build_priors(match, config=self.config)
+        assert_neutral(prior, slice(0, 9))
+        self.assertEqual(prior.dead_evidence[9], .9)
+
+    def test_half_boundary_discards_retained_stop(self):
+        match = motion_after_stop()
+        self.missing(match, [6])
+        match.half[7:] = 2
+        assert_neutral(build_priors(match, config=self.config), slice(6, None))
+
+    def test_gap_budget_uses_fps_and_never_rounds_up(self):
+        for fps in (10., 25., 50.):
+            match = match_input(n=80, fps=fps, tagged=True)
+            budget = math.floor(.2 * fps)
+            self.missing(match, list(range(2, 2 + budget)))
+            first = math.ceil(.6 * fps) + budget - 1
+            prior = build_priors(match, config=self.config)
+            assert_neutral(prior, slice(0, first))
+            self.assertEqual(prior.dead_evidence[first], .9)
+        match = match_input(tagged=True)
+        self.missing(match, [3])
+        prior = build_priors(match, config={"dead_ball": {"max_missing_gap_s": .09}})
+        np.testing.assert_array_equal(prior.dead_evidence, build_priors(match).dead_evidence)
+
+    def test_budget_validation_and_diagnostic_partition(self):
+        for value in (-.1, .7, True, float("nan")):
+            with self.assertRaises(ValueError):
+                DeadBallConfig(max_missing_gap_s=value)
+        match = match_input(tagged=True)
+        self.missing(match, [3, 4])
+        report = summarize_prior_diagnostics(match, build_features(match), self.config)
+        self.assertEqual(report["frame_counts"]["confirmed_stop_frames"], 5)
+        self.assertEqual(report["event_counts"]["confirmed_stop_runs"], 1)
+        self.assertEqual(report["event_counts"]["pending_stop_runs_reset_by_unusable_ball"], 0)
+        self.assertEqual(report["without_control_comparison"]["changed_stop_frames"], 0)
+
+
 class PriorDiagnosticsTests(unittest.TestCase):
     def test_attrition_partition_and_common_denominator(self):
         match = match_input(tagged=True)

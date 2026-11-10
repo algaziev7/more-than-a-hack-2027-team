@@ -9,6 +9,31 @@
 
 ## Current follow-up: E2's low dead-ball coverage report
 
+### Bounded-gap candidate added after the diagnostic increment
+
+- Implemented opt-in `dead_ball.max_missing_gap_s` (default 0, original policy).
+  Synthetic candidate: 0.2 s, not selected from match counts or labels.
+  Retain stop support across a bounded total missing-frame budget; count only
+  observed candidates. Preserve recent stop context across short occlusions,
+  require fresh consecutive live motion, check reacquisition displacement,
+  and reset on rejected samples, exhausted budget and half boundaries.
+- No shared fields/signatures or E2 fusion changes. E2/E4 must review the new
+  configuration's behavior before choosing it for submission. The main
+  coverage bottleneck is still unmeasured; this addresses one explicit failure
+  mode rather than establishing a complete stoppage detector.
+- Ten synthetic tests added: short/long/repeated gaps, no missing-only stop,
+  reacquisition elsewhere, rejected samples, restart timing, half reset,
+  FPS-aware budget limits, validation and aggregate diagnostics. E3 suite:
+  50 pass on the existing Python 3.15 environment.
+- Full suite: 144 discovered, 142 pass, two real-decoder integration skips;
+  `git diff --check` passes. PR creation remains blocked by the previously
+  reported GitHub permission; the candidate is published on this task branch.
+- Next: run aggregate diagnostics locally with gap setting 0 and 0.2 using
+  the same remaining config, then review the evidence and tradeoffs in
+  DEAD_BALL.md with Belek/Beks. No match run was performed by the assistant.
+
+### Original diagnostic increment (behavior unchanged at gap setting 0)
+
 - Base: main `aa73103`, which includes E5 PR #10. E2 remains unmerged here;
   fetched/read `origin/e2/state-v1`'s current handoff before investigating.
 - Worked in an isolated E3 worktree; the shared main checkout is unchanged.

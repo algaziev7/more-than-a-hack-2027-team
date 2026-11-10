@@ -4,6 +4,51 @@
 It returns Azamat's `PriorData`, ready for Belek and Isken's state machine.
 The state machine still decides the final H, A, D, or X labels.
 
+## Bounded missing-observation support (review candidate)
+
+Set `dead_ball.max_missing_gap_s` to enable bounded tolerance; the default is
+0, preserving the original consecutive-observation policy described below.
+The synthetic candidate uses 0.2 s. This is an engineering hypothesis, not a
+selected competition setting. Compare it locally against 0 with otherwise
+identical inputs/config using the aggregate diagnostic recipe below.
+
+For the candidate run, insert this before building features/priors in that recipe:
+
+```python
+config.setdefault("dead_ball", {})["max_missing_gap_s"] = 0.2
+```
+
+Save baseline and candidate totals separately locally; use 0 for the baseline.
+
+The detector still requires `ceil(stop_duration_s * fps)` observed supporting
+frames. Missing observations emit neutral dead/live evidence and never advance
+confirmation. A stop run may retain its support through at most
+`floor(max_missing_gap_s * fps)` missing frames **in total**, including repeated
+gaps; exceeding that budget resets the run and restart context. Thus intermittent
+observations cannot accumulate indefinitely. With no pending stop run, retained
+restart context tolerates only that many consecutive missing observations and
+still expires according to the existing wall-clock `restart_context_s`.
+
+On reacquisition, displacement from the last usable position must also fit the
+stationary-speed bound over elapsed time to retain pending stop support. A
+stationary observation at a new location starts fresh support. Implausible
+cross-gap displacement clears restart context too. This check does not impute
+positions or claim the unseen trajectory was stationary. Rejected observed
+samples always reset context; tolerance applies only to actually missing balls.
+Live-motion dwell always resets on a gap, and half changes reset everything.
+
+Selection argument: dropping all evidence at a single occlusion makes confirmed
+stops depend strongly on uninterrupted detection. Retaining a bounded amount of
+observed support addresses that failure while preserving the evidence count,
+requiring fresh motion confirmation, and bounding stale support. The risk is
+an unseen brief restart/stop within the gap; endpoint checks cannot rule it out.
+Review this tradeoff with E2/E4 before enabling it in a frozen submission.
+Long unobserved stoppages and still balls lacking contextual support remain
+unresolved. More D frames alone do not establish better predictions.
+
+Synthetic verification: 50 E3 tests pass, including ten new gap-policy tests.
+No restricted-data experiment or public-label tuning was performed.
+
 This is an untuned first version. It can suggest that play is stopped or live;
 it cannot establish the referee's decision from tracking alone.
 

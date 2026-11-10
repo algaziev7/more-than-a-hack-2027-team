@@ -1,7 +1,9 @@
 # E1 setup and input contract
 
-This branch implements data infrastructure. It does not contain a possession
-model or E5's integrated pipeline. The public five minutes are only a pipeline
+E1's data infrastructure is merged through PR #2. Main also contains E3's
+tagging/stoppage priors and E4's tracking features. E2's decoder remains on its
+review branch; E5's integrated pipeline is absent from this checkout.
+The public five minutes are only a pipeline
 sanity check; do not use their scores for training, tuning, or model selection.
 
 Validation status (2026-10-25): Azamat reported that the real-data
@@ -9,6 +11,12 @@ Validation status (2026-10-25): Azamat reported that the real-data
 tactical input loading on his laptop. Video decoding, the complete inventory,
 baseline regeneration, other laptops, and E5 prediction integration remain
 separate checks. The private report was not read by the assistant or committed.
+
+Follow-up (2026-11-10): the E1 branch was fast-forwarded to main at `d2db589`.
+Configuration validation now checks both POSIX and Windows absolute-path syntax
+regardless of the host OS. A synthetic regression reproduces Beks's reported
+Windows failure and checks that relative paths remain accepted. Native Windows
+execution of the fix is still pending.
 
 ## Environment and synthetic checks
 
@@ -184,3 +192,32 @@ exports its `Prediction`. Until E5 is available it exits with a clear error and
 writes no prediction. It supplies no substitute model. The prediction package
 does not import GT or the scorer. E4 owns checking the final file, and E5 owns
 pipeline integration and independent reproduction on another laptop.
+
+## E1 technical-document section
+
+The input layer reads tactical ATD metadata/tracking and optional automatic
+Smart Tagging into validated NumPy contracts. It checks every ordered tracking
+frame ID and converts the raw 1-based frame axis to the 0-based tactical output
+axis. Positions are expressed in metres. Missing observations remain NaN with
+explicit validity masks; raw speed placeholders without coordinates are ignored.
+Track slots carry team membership rather than a persistent player identity.
+Event intervals preserve overlaps and original tag semantics, use half-open
+frame bounds, and are clipped to the video. Published half masks come from the
+organiser's game constants; input loading assigns no possession labels.
+
+Optional local caches are keyed by asset content, configuration, schema, game
+constants, and loader/contract source hashes. Numeric arrays and JSON are stored
+without pickle, writes are atomic, and unusable caches are rebuilt. The CLI
+validates JSON configuration, keeps laptop-specific absolute paths in arguments
+or the environment, and seeds Python and NumPy before calling E5's pipeline.
+Export checks all 199,319 labels and writes deterministic UTF-8 CSV bytes with
+LF newlines through an atomic replacement.
+
+This layer trains no model and reads no ground truth during prediction. Its
+synthetic tests establish contract behavior, cache handling, and deterministic
+format-valid export. Azamat reported successful local tracking/tag loading after
+the missing-position parser fix. Complete asset/video verification, repeatable
+baseline regeneration, a real-data cache round trip, full-pipeline runtime, and
+second-laptop CSV reproduction remain unverified. These infrastructure checks
+do not establish possession accuracy or an improvement in spellF1. E5 should
+combine this section with the model owners' descriptions after integration.

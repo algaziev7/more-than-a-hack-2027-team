@@ -25,8 +25,8 @@ to E5's branch. This is compatibility evidence, not a reviewed merge.
 `python scripts/check_setup.py`, `python -m pip check`, `python -m tabnanny
 possession scripts tests .github`, `git diff --check`, local Markdown-link/example
 syntax checks and the filename-only repository guard passed. No data command in
-the documentation was executed. Native Windows/Linux CI results are recorded in
-the owner handoff after the branch is pushed.
+the documentation was executed. Hosted Ubuntu and Windows jobs passed for implementation `6985721` on both
+push and PR events; see the [owner handoff](../owners/goblin.md) for the run link.
 
 ## Reproduce the compatibility check
 

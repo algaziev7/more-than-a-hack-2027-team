@@ -29,11 +29,13 @@ It is absent from main. Read E2's handoff on that branch; the
 [merged handoff](owners/belek_isken.md) still describes the older validation-plan
 stage. The unresolved live-play/unknown-team behavior needs E2/E3/E4 agreement.
 
-`e5/pipeline-v1` adds thin loader -> features -> priors -> decoder wiring,
+[E5 PR #10](https://github.com/algaziev7/more-than-a-hack-2027-team/pull/10)
+(`e5/pipeline-v1`, implementation `6985721`) adds thin loader -> features -> priors -> decoder wiring,
 cross-stage checks, local run manifests, synthetic Ubuntu/Windows CI, a PR
 template, artifact filename/ignore guards, and team/technical/release docs.
 Missing E2 fails before assets are read. Missing/disabled tags remain supported.
-No shared signatures, fields or configuration sections changed. See
+No shared signatures, fields or configuration sections changed. Hosted synthetic
+CI passed on Ubuntu and Windows for this implementation. See
 [Goblin's handoff](owners/goblin.md) for actual test evidence and next steps.
 
 ## Remaining gates

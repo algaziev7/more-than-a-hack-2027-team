@@ -1,12 +1,14 @@
 # Goblin (AI agents) — Integration and documentation
 
 - Owner: Goblin (AI agents)
-- Status: first integration increment implemented; E1 review pending
+- Status: first integration increment implemented; PR #10 awaiting E1 review
 - Branch: `e5/pipeline-v1`, based on main `3197721`
 - Reviewer: E1 (Azamat)
 - Owned files: pipeline; integration tests; run-manifest/report assembly; CI;
   .gitignore; team/technical/release docs
 - Last update: 2026-11-10
+- Reference: implementation commit `6985721`;
+  [PR #10](https://github.com/algaziev7/more-than-a-hack-2027-team/pull/10)
 
 ## Completed
 
@@ -46,6 +48,10 @@ Python 3.12.12/macOS arm64 with the existing `requirements-team.lock` environmen
 - `python -m tabnanny possession scripts tests .github`, `git diff --check`,
   repository filename guard and documentation links/example syntax pass.
 
+- Hosted synthetic CI passed on Ubuntu and Windows for `6985721`, on both
+  push and PR events. [PR CI run](https://github.com/algaziev7/more-than-a-hack-2027-team/actions/runs/42823964683).
+  No assets or credentials were needed by those checks.
+
 All inputs invented; no public answer labels or competition assets read.
 
 ## Review, blockers and next exact action
@@ -56,15 +62,16 @@ All inputs invented; no public answer labels or competition assets read.
   were not copied into this branch. Real-decoder tests skip explicitly until
   E2 is integrated; the disposable overlay is separate compatibility evidence.
 - A maintainer must configure branch protection and final public visibility;
-  this account cannot administer those settings. CI is not yet observed hosted.
+  this account cannot administer those settings. Hosted synthetic CI passed.
 - Complete local full-data execution, official validation and independent
   second-laptop CSV-hash comparison after E2/E5 review/merge. Synthetic bytes
   and same-laptop checks do not satisfy the independent reproduction gate.
 - Collect owners' final method/provenance sign-offs and registered team name,
   then assemble the final team-named CSV/Markdown and human upload confirmation.
-- Full-match accuracy, improved spellF1, a final selected submission and native
-  Windows/Linux execution are unverified. Use allowed evidence only.
+- Full-match accuracy, improved spellF1, a final selected submission and full-data
+  execution across laptops are unverified. Use allowed evidence only.
 
-Next: run final synthetic checks, commit/push this branch and open the E1 review
-PR. After review, integrate E2/E5 and have an authorised teammate execute the
-[local release procedure](../RELEASE.md). Branch work is not integrated until merged.
+Next: Azamat reviews PR #10 and E4 reviews E2 PR #6. Integrate reviewed E2/E5,
+then have an authorised teammate execute the [local release procedure](../RELEASE.md).
+The branch is committed/pushed; the shared E1 checkout remains unchanged.
+Branch work is not integrated until merged.

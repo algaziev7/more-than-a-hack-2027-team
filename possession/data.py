@@ -7,7 +7,7 @@ ground truth are not required. Exceptions never include a tracking row.
 import hashlib
 import json
 import os
-from pathlib import Path, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
@@ -34,7 +34,7 @@ def validate_config(config=None):
         elif isinstance(value, list):
             for item in value:
                 check_values(item)
-        elif isinstance(value, str) and (Path(value).is_absolute() or PureWindowsPath(value).is_absolute()):
+        elif isinstance(value, str) and (PurePosixPath(value).is_absolute() or PureWindowsPath(value).is_absolute()):
             raise ValueError("local absolute paths belong in CLI/environment, not configuration")
     check_values(config)
     # Also rejects nonfinite floats, sets, arrays, and unserialisable objects.

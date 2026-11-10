@@ -144,8 +144,12 @@ made a stop), and ordinary pending evidence never expired (a touch 40s old compl
 turnover). Fixed: live play now discards a pending `D` candidate, and every candidate uses a
 sliding evidence window (`evidence_window_s`, 6s). Fifth amendment in the decision doc. Beks's
 PR review raised the same live-play bug, plus overlapping live/dead thresholds letting proximity
-alone exit a stop; config now rejects `live_confirmed_threshold >= dead_threshold`. The
-real-match smoke test was not re-run for this change.
+alone exit a stop; config now rejects `live_confirmed_threshold >= dead_threshold`.
+
+Real match, re-run on Python 3.12.16 after both fixes (placeholder features): 14.5s, `X` count
+still exact, 103 transitions, `D` unchanged at 7,970 frames. Unchanged is plausible, not proof:
+with zero team reliability, team evidence comes only from contiguous tagging windows, so neither
+fix's scenario likely occurs on this input yet.
 
 ### Next exact action
 
@@ -162,8 +166,9 @@ don't treat as fixed constants" framing.
 - Reference: PR #6 (merged PR #7 into it), plus six follow-up commits for Decision 6 and its
   five amendments, on `e2/state-v1` -- not yet merged to `main`.
 - Verification: `python -m unittest discover -s tests` -- 144/144 pass (132 + 12 new for Decision
-  6 and its amendments), Python 3.9 system interpreter. Real-match smoke test as above; not re-run
-  after the fifth amendment.
+  6 and its amendments) on Python 3.9.6 and on Python 3.12.16 with `requirements-team.lock`
+  (`pip check` clean), macOS arm64. Real-match smoke test re-run after the fifth amendment
+  (`.local/smoke_real.py`, uncommitted): `X` exact, `D` 7,970 (unchanged).
 - Untested: anything against real E4 features; only a neutral placeholder so far.
 - Interface changes: `StateMachineConfig` gained `restart_evidence_threshold`,
   `live_confirmed_threshold`, `latched_team_dwell_s`, and `evidence_window_s` (all validated, all documented in

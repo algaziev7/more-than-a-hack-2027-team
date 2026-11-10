@@ -1,22 +1,55 @@
 # Belek and Isken — Possession state machine
 
 - Owner: Belek and Isken
-- Status: Belek's decoder in PR #6; Isken's validation/fixes built on that PR, review pending
-- Branch: Belek on `e2/state-v1`; Isken on `e2/isken-validation`
+- Status: Belek's decoder in PR #6; Isken's corrective follow-up awaits review
+- Branch: Belek on `e2/state-v1`; Isken on `e2/decoder-edge-fixes`
 - Reviewer: E4
 - Owned files: possession/state_machine.py; state-machine configuration and tests
 - Current milestone: synthetic decoder validation and E3/export integration
-- Last update: 2026-11-08 (Isken's track)
+- Last update: 2026-11-10 (Isken's track)
 
 ## Pair coordination
 
-The earlier plan was two independent implementations. Isken's current task is
-to validate and strengthen Belek's implemented decoder first. His follow-up is
-based on `c8258b6` from PR #6; it does not replace Belek's branch. E4 remains the
-behavior reviewer. Belek's historical handoff below is preserved; consult PR #6
-for his later contract-integration changes and reported local smoke test.
+Isken's first validation pass (PR #7) is merged into Belek's PR #6. The current
+corrective follow-up is based on `9883b4d` from PR #6. E4 remains the behavior
+reviewer. The earlier validation record and Belek's handoff are retained below.
 
-## Isken's track (`e2/isken-validation`)
+## Isken's corrective follow-up (`e2/decoder-edge-fixes`)
+
+Five new regression tests reproduced the four review findings plus the related
+zero-weight dead-evidence case before changing production code. Fixes:
+
+- A frame classified as dead after restart weighting cannot also clear the
+  stop latch. Contradictory clues preserve D; a later unopposed restart still
+  releases the latch. The conflicting test values are valid synthetic priors,
+  not a claim about E3's current default output.
+- `latched_team_dwell_s` must exceed ordinary team dwell and require strictly
+  more observations at the actual match fps. Invalid combinations now fail
+  explicitly, including unequal durations that round to the same frame count.
+- Zero reliability never contributes team or dead evidence, even with zero
+  configured reliability floors. Tied team evidence remains non-decisive.
+- Fuse both H/A columns and compare their signed difference symmetrically.
+  An eight-machine-epsilon roundoff allowance makes the margin threshold
+  inclusive for both teams; it is numerical tolerance, not a tuned threshold.
+  Tests cover tracking/tagging/both sources at, above, and below the boundary.
+
+Verification on Python 3.14.0/macOS arm64 with `requirements-team.lock`:
+`python -m unittest discover -s tests` passes **149 tests** on this branch and
+**162 tests** in a temporary combined checkout with `main` at `d2db589` (E4).
+All four original standalone review repros now pass. `pip check` and
+`git diff --check` pass. No restricted data or public answer labels were used.
+
+Shared fields/signature and numeric defaults are unchanged; invalid dwell
+combinations now fail. Behavior changes are confined to conflicting stop/restart
+clues, zero-weight/tied clues, and floating-point margin boundaries. E1/E3/E4/E5
+should review these semantics. Python 3.12, full-match accuracy, and second-laptop
+reproduction were not tested in this follow-up.
+
+Next exact action: Belek and Beks/E4 review and merge this follow-up into PR #6,
+then complete its review against the now-merged E4 features. E5 pipeline wiring
+and the unknown-team restart policy remain separate work.
+
+## Isken's first validation pass (`e2/isken-validation`, historical)
 
 ### Completed and verified
 

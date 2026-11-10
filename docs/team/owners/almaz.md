@@ -1,11 +1,46 @@
 # Almaz — Event tags and stoppages
 
 - Owner: Almaz
-- Status: first stoppage/restart prior implemented and tested; review pending
-- Branch: `almaz/dead-ball-priors`
+- Status: priors merged via PR #5; aggregate coverage follow-up ready for review
+- Branch: `e3/prior-coverage-diagnostics`
 - Reviewer: Beks and Belek/Isken; Azamat for shared types
 - Files: `possession/dead_ball.py`, its tests, and related docs
-- Last update: 2026-11-01
+- Last update: 2026-11-10
+
+## Current follow-up: E2's low dead-ball coverage report
+
+- Base: main `aa73103`, which includes E5 PR #10. E2 remains unmerged here;
+  fetched/read `origin/e2/state-v1`'s current handoff before investigating.
+- Worked in an isolated E3 worktree; the shared main checkout is unchanged.
+- Added `summarize_prior_diagnostics` in E3's module. It reports totals and
+  graded-frame shares for usable-ball/no-stop coverage, motion/stillness/context
+  gates, incomplete dwell resets, confirmed stop runs and subsequent restarts.
+  It compares stop support with/without E4 control corroboration. See the
+  [local recipe and counter definitions](../DEAD_BALL.md#totals-only-coverage-diagnostics-2026-11-10).
+- Code inspection and synthetic E4 integration establish that E4 control cannot
+  remove E3 stop-support frames: stillness and live-motion gates are disjoint.
+  Additional live support can affect E2's final D duration. This explains a
+  possible mechanism, not the observed real-match reduction's measured cause.
+- Missing/unusable observations reset stop dwell and context; stillness also
+  requires a tag or outside-pitch clue. The dominant real-match coverage loss
+  remains unmeasured. No restricted data or public labels were read or run.
+- Shared contracts/signatures/config/defaults, tagging weights, prediction
+  behavior and decoder fusion are unchanged. The new helper is opt-in.
+  E2's proposed gap-only tag fusion remains E2-owned and needs E4 review.
+- Verification: `python -m unittest tests.test_dead_ball` — 40 pass.
+  `python -m unittest discover -s tests` — 134 discovered, 132 pass, two skips
+  for the unmerged real decoder. Python 3.15.0 using the existing temporary
+  environment/pinned dependencies; Python 3.12 remains unverified this session.
+  `git diff --check` passed. Seven new tests cover gate totals, denominator
+  semantics, missing/rejected-ball resets, half/lost-support resets, restart
+  counting, real E4 stop invariance, additional live support and empty/disabled
+  reports. No competition accuracy result is established.
+- Next exact action: Belek/Beks review the diagnostic definitions and run the
+  documented local recipe with the same prediction config. Share totals only.
+  Compare prior stop support separately from final decoder D labels before
+  proposing behavior changes. Do not tune against a desired stoppage count.
+
+## Historical handoff (2026-11-01, now merged)
 
 ## What is already merged
 

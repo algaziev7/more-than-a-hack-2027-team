@@ -11,8 +11,9 @@ import numpy as np
 from possession.contracts import FeatureData, MatchData, PriorData
 from possession.dead_ball import (
     CONFIRMED_RESTART, LIVE_MOTION, STOP_OUTSIDE_AND_STILL, STOP_TAG_AND_STILL,
-    UNUSABLE_BALL, DeadBallConfig, build_priors,
+    UNUSABLE_BALL, DeadBallConfig, build_priors, summarize_prior_diagnostics,
 )
+from possession.features import build_features
 from possession.tagging import UNKNOWN_TEAM, build_tagging_priors
 
 
@@ -338,6 +339,94 @@ class DeadBallTests(unittest.TestCase):
         self.assertIsInstance(priors, PriorData)
         self.assertEqual(priors.tag_team_evidence.shape, (199319, 2))
         assert_neutral(priors)
+
+
+class PriorDiagnosticsTests(unittest.TestCase):
+    def test_attrition_partition_and_common_denominator(self):
+        match = match_input(tagged=True)
+        report = summarize_prior_diagnostics(match)
+        counts = report["frame_counts"]
+        self.assertEqual(counts["graded_frames"], 12)
+        self.assertEqual(counts["ball_usable_frames"], 12)
+        self.assertEqual(counts["confirmed_stop_frames"], 7)
+        self.assertEqual(counts["usable_without_confirmed_stop_frames"], 5)
+        self.assertEqual(counts["stop_candidate_below_dwell_frames"], 5)
+        self.assertEqual(report["event_counts"]["confirmed_stop_runs"], 1)
+        self.assertEqual(report["graded_frame_shares"]["confirmed_stop_frames"], 7 / 12)
+        self.assertEqual(counts["ball_usable_frames"], sum(counts[name] for name in (
+            "usable_not_still_frames", "still_without_stop_context_frames",
+            "stop_candidate_below_dwell_frames", "confirmed_stop_frames")))
+
+    def test_missing_and_rejected_observations_reset_incomplete_runs(self):
+        match = match_input(tagged=True)
+        match.ball_xy_m[3] = np.nan
+        match.ball_observed[3] = False
+        match.ball_speed_mps[3] = np.nan
+        match.ball_speed_mps[7] = 100.
+        report = summarize_prior_diagnostics(match)
+        counts = report["frame_counts"]
+        self.assertEqual(counts["ball_missing_frames"], 1)
+        self.assertEqual(counts["ball_observed_unusable_frames"], 1)
+        self.assertEqual(counts["confirmed_stop_frames"], 0)
+        self.assertEqual(report["event_counts"]["pending_stop_runs_reset_by_unusable_ball"], 2)
+        self.assertEqual(counts["ball_usable_frames"], 10)
+
+    def test_lost_support_and_half_resets_are_separate(self):
+        match = match_input(n=10)
+        match.half[6:] = 2
+        match.events = [
+            {"start_frame": 0, "end_frame": 2, "code": "SET PIECES", "tags": {}},
+            {"start_frame": 4, "end_frame": 10, "code": "SET PIECES", "tags": {}},
+        ]
+        events = summarize_prior_diagnostics(match)["event_counts"]
+        self.assertEqual(events["pending_stop_runs_reset_by_lost_support"], 1)
+        self.assertEqual(events["pending_stop_runs_reset_by_half_change"], 1)
+        self.assertEqual(events["confirmed_stop_runs"], 0)
+
+    def test_restart_is_counted_once_and_is_not_stop_cancellation(self):
+        report = summarize_prior_diagnostics(motion_after_stop())
+        self.assertEqual(report["event_counts"]["confirmed_stop_runs"], 1)
+        self.assertEqual(report["event_counts"]["stop_contexts_followed_by_confirmed_live"], 1)
+        self.assertEqual(report["confirmed_stop_run_share_followed_by_live"], 1.)
+        self.assertEqual(report["confirmed_stop_frames_overwritten_by_live"], 0)
+
+    def test_real_feature_builder_cannot_remove_stop_support(self):
+        for match in (match_input(tagged=True), match_input(outside=True), motion_after_stop()):
+            with self.subTest(events=bool(match.events)):
+                features = build_features(match)
+                before = build_priors(match)
+                after = build_priors(match, features)
+                np.testing.assert_array_equal(before.dead_evidence > .5, after.dead_evidence > .5)
+                report = summarize_prior_diagnostics(match, features)
+                self.assertEqual(report["without_control_comparison"]["changed_stop_frames"], 0)
+                self.assertEqual(report["confirmed_stop_frames_overwritten_by_live"], 0)
+
+    def test_control_adds_live_evidence_without_changing_stops(self):
+        match = match_input()
+        match.ball_xy_m[:, 0] += np.arange(12) * .3
+        match.ball_speed_mps[:] = 3.
+        match.players_xy_m[:, 0] = match.ball_xy_m + [.1, 0.]
+        match.players_xy_m[:, 1] = match.ball_xy_m + [5., 0.]
+        comparison = summarize_prior_diagnostics(match, build_features(match))["without_control_comparison"]
+        self.assertEqual(comparison["changed_stop_frames"], 0)
+        self.assertEqual(comparison["additional_live_frames_with_control"], 11)
+
+    def test_empty_disabled_and_excluded_reports_are_json_totals_only(self):
+        import json
+
+        for match, config in ((match_input(n=0), None),
+                              (match_input(), {"dead_ball": {"enabled": False}}),
+                              (match_input(), {"dead_ball": {"evidence_weight": 0}})):
+            report = summarize_prior_diagnostics(match, config=config)
+            self.assertIsNone(report["confirmed_stop_run_share_followed_by_live"])
+            json.dumps(report, allow_nan=False)
+            if not len(match.frame):
+                self.assertTrue(all(v is None for v in report["graded_frame_shares"].values()))
+        match = match_input(tagged=True)
+        match.half[:] = 0
+        report = summarize_prior_diagnostics(match)
+        self.assertTrue(all(v == 0 for v in report["frame_counts"].values()))
+        self.assertTrue(all(v is None for v in report["graded_frame_shares"].values()))
 
 
 if __name__ == "__main__":

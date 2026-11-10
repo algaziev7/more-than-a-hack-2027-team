@@ -138,6 +138,13 @@ tolerance untouched. Fourth amendment in the decision doc. Real match: `D` share
 7,514 -> 7,970 -- this time via Smart Tagging's real (if sparse) team hints, not team evidence,
 since placeholder features still have zero reliability.
 
+A sixth review (Almaz, on `96663a8`) found two more, both reproduced on synthetic inputs first:
+confirmed live play didn't cancel a pending stop (two isolated `D` frames 25 live frames apart
+made a stop), and ordinary pending evidence never expired (a touch 40s old completed a
+turnover). Fixed: live play now discards a pending `D` candidate, and every candidate uses a
+sliding evidence window (`evidence_window_s`, 6s). Fifth amendment in the decision doc. The
+real-match smoke test was not re-run for this change.
+
 ### Next exact action
 
 Still blocked on Beks/E4's real `features.py` for a meaningful accuracy picture -- everything
@@ -150,13 +157,14 @@ don't treat as fixed constants" framing.
 
 - Changed files: `possession/state_machine.py`, `tests/test_state_machine.py`,
   `tests/e2_scenarios.py`, `tests/test_state_machine_validation.py`, the decision doc.
-- Reference: PR #6 (merged PR #7 into it), plus five follow-up commits for Decision 6 and its
-  four amendments, on `e2/state-v1` -- not yet merged to `main`.
-- Verification: `python -m unittest discover -s tests` -- 140/140 pass (132 + 8 new for Decision
-  6 and its amendments). Real-match smoke test as above.
+- Reference: PR #6 (merged PR #7 into it), plus six follow-up commits for Decision 6 and its
+  five amendments, on `e2/state-v1` -- not yet merged to `main`.
+- Verification: `python -m unittest discover -s tests` -- 142/142 pass (132 + 10 new for Decision
+  6 and its amendments), Python 3.9 system interpreter. Real-match smoke test as above; not re-run
+  after the fifth amendment.
 - Untested: anything against real E4 features; only a neutral placeholder so far.
 - Interface changes: `StateMachineConfig` gained `restart_evidence_threshold`,
-  `live_confirmed_threshold`, and `latched_team_dwell_s` (all validated, all documented in
+  `live_confirmed_threshold`, `latched_team_dwell_s`, and `evidence_window_s` (all validated, all documented in
   Decision 6 and its amendments).
 - Decision: team evidence must never be the sole proof a stop ended, except after a much longer
   wait than normal (the safety valve) so the latch can never freeze a half indefinitely; the
@@ -165,6 +173,8 @@ don't treat as fixed constants" framing.
   calls, documented as such, not data-derived.
 - Next task: wire in real features; revisit dwell/threshold defaults, including
   `latched_team_dwell_s`, once real `D`-spell-length data exists.
+- Open policy question (Almaz): confirmed live play with no reliable team stays `D`. Needs a
+  team decision.
 - Help needed: E4 review of the fusion/threshold logic generally; Almaz/E3 on how often real
   dead-ball evidence will carry genuine restart/live-motion confirmation vs. staying neutral --
   directly informs whether `latched_team_dwell_s`'s current default is in the right range.

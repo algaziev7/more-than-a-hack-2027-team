@@ -48,6 +48,10 @@ def grouped_reference(symbols, half, team_required, dead_required, latched_requi
     cash in the instant a single frame of real proof arrives) -- a pending D-candidate, unrelated
     to the gate, is untouched. Defaults to `team_required` (no safety valve distinguishable from
     ordinary gating) when omitted, for callers that don't exercise it.
+
+    R also discards a pending D-candidate (2026-11-10, Almaz's review): confirmed live play
+    between two isolated stop observations means they are not one stop. The evidence-age window
+    (evidence_window_s, ~150 frames by default) is not modelled: every sequence here is shorter.
     """
     if latched_required is None:
         latched_required = team_required
@@ -70,6 +74,8 @@ def grouped_reference(symbols, half, team_required, dead_required, latched_requi
                 # wipe an ordinary, never-gated run's progress for no reason.
                 if pending_symbol in ("H", "A") and state == "D":
                     pending_symbol, pending_count = None, 0
+            if symbol == "R" and pending_symbol == "D":
+                pending_symbol, pending_count = None, 0
 
             candidate = symbol if symbol in "HAD" else None
             if candidate is None:
@@ -142,6 +148,10 @@ class StateMachineValidationTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, name):
                         decode(*inputs, {"state_machine": {name: value}})
 
+    def test_evidence_window_must_cover_every_dwell(self):
+        with self.assertRaisesRegex(ValueError, "evidence_window_s"):
+            decode(*evidence_sequence("H"), {"state_machine": {"evidence_window_s": .5}})
+
     def test_empty_single_and_excluded_frames(self):
         for symbols, half, expected in (("", [], ""), ("H", [1], "D"),
                                         ("HAD", [0, 0, 0], "XXX"),
@@ -155,10 +165,24 @@ class StateMachineValidationTests(unittest.TestCase):
         result = decode(*evidence_sequence("H" * 30 + "." * 1000))
         self.assertTrue(np.all(result.labels[14:] == "H"))
 
-    def test_pending_evidence_survives_long_gap_current_policy(self):
-        # Characterization, not endorsement: a pending candidate has no expiry.
+    def test_pending_evidence_expires_after_evidence_window(self):
+        # Almaz's review (2026-11-10): 40s-old support must not combine with a fresh touch.
         result = decode(*evidence_sequence("H" * 30 + "A" * 14 + "." * 1000 + "A"))
-        self.assertEqual(label_transitions(result.labels, start=30), [(1044, "H", "A")])
+        self.assertEqual(label_transitions(result.labels, start=30), [])
+        # Within the default 150-frame window the gap is still tolerated (Decision 3).
+        result = decode(*evidence_sequence("H" * 30 + "A" * 14 + "." * 130 + "A"))
+        self.assertEqual(label_transitions(result.labels, start=30), [(174, "H", "A")])
+        # Just outside it, the oldest support has aged out.
+        result = decode(*evidence_sequence("H" * 30 + "A" * 14 + "." * 137 + "A"))
+        self.assertEqual(label_transitions(result.labels, start=30), [])
+
+    def test_confirmed_live_play_cancels_pending_stop(self):
+        # Almaz's review (2026-11-10): two isolated stop frames split by live play are not a stop.
+        result = decode(*evidence_sequence("H" * 30 + "D" + "R" * 25 + "D" + "." * 50))
+        self.assertEqual(label_transitions(result.labels, start=30), [])
+        # Without live play between them they still combine (Decision 3 pause, not reset).
+        result = decode(*evidence_sequence("H" * 30 + "D" + "." * 25 + "D" + "." * 50))
+        self.assertEqual(label_transitions(result.labels, start=30), [(56, "H", "D")])
 
     def test_incumbent_support_cancels_pending_turnover(self):
         result = decode(*evidence_sequence("H" * 30 + "A" * 14 + "H" + "A" * 15))

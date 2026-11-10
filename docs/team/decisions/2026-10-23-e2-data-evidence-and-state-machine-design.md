@@ -318,6 +318,28 @@ frames — not from team-evidence proximity, which has zero reliability in the p
 from Smart Tagging's real `tag_team_evidence`, which can itself be sparse across a long stretch
 and was previously enough to trip the valve without being sustained either.
 
+### Fifth amendment — confirmed live play cancels a pending stop; all evidence now ages out (2026-11-10)
+
+Almaz's review of `96663a8` found two more, both reproduced on synthetic inputs before changing
+anything:
+
+1. **Live play didn't cancel a pending stop.** `H*30 + D + R*25 + D + .*50` switched H -> D at
+   frame 56: two isolated stop frames combined across 25 frames of confirmed live play. Fix: an
+   `exit_dead_ok` frame (that isn't itself dead) discards a pending `D` candidate. The current
+   H/A label is kept; no new possessor is guessed. Without live play between them (`.` instead of
+   `R`), two stop frames still combine, per Decision 3.
+2. **Ordinary pending evidence never expired.** `H*30 + A*14 + .*1000 + A` switched H -> A at
+   frame 1044 using support from 40s earlier. Fix: the fourth amendment's sliding window now
+   applies to every candidate, sized by the new `evidence_window_s` (6s, 150 frames at 25fps);
+   the latched case keeps its `2 * latched_team_dwell_frames` window. This partly reverses
+   Decision 3's *unbounded* gap tolerance: gaps are still paused, not reset, but only within the
+   window. The 100-frame-gap timing case is unchanged. 6s is a judgement call: long enough for
+   the 100-frame synthetic occlusion, short enough to exclude 40s-old support. Revisit with real
+   occlusion-length data.
+
+Still open (policy, not a bug): confirmed live play with no reliable team stays `D`, which
+conflicts with `D` meaning stopped play. Needs a team decision.
+
 ## Explicitly deferred (not forgotten, not yet needed)
 
 - No vectorization of the per-frame loop — 199k frames is cheap in plain Python; confirmed at

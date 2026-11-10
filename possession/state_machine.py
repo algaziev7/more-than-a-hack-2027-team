@@ -120,6 +120,11 @@ class StateMachineConfig:
     # from the brief proximity Decision 6 exists to ignore (Almaz's throw-in case).
     latched_team_dwell_s: float = 3.0   # ~75 frames
 
+    # Bounded evidence age for ordinary (ungated) transitions: only supporting observations from
+    # the last evidence_window_s count. Keeps Decision 3's tolerance for occlusions (a 100-frame
+    # gap mid-turnover still works) without letting a touch from 40s ago combine with one now.
+    evidence_window_s: float = 6.0   # ~150 frames
+
     def __post_init__(self):
         for field_ in fields(self):
             value = getattr(self, field_.name)
@@ -129,6 +134,8 @@ class StateMachineConfig:
             raise ValueError("state_machine.fps must be positive")
         if min(self.dead_dwell_s, self.team_dwell_s, self.latched_team_dwell_s) <= 0:
             raise ValueError("dwell durations must be positive")
+        if self.evidence_window_s < max(self.dead_dwell_s, self.team_dwell_s):
+            raise ValueError("state_machine.evidence_window_s must be at least every dwell")
         for name in ("dead_threshold", "dead_reliability_min", "restart_weight",
                      "team_margin_threshold", "team_reliability_min",
                      "restart_evidence_threshold", "live_confirmed_threshold"):
@@ -146,6 +153,10 @@ class StateMachineConfig:
     @property
     def latched_team_dwell_frames(self) -> int:
         return max(1, math.ceil(self.latched_team_dwell_s * self.fps))
+
+    @property
+    def evidence_window_frames(self) -> int:
+        return max(1, math.ceil(self.evidence_window_s * self.fps))
 
 
 def _section(config, name, cls):
@@ -325,6 +336,10 @@ def decode(match, features, priors, config=None) -> Prediction:
 
         if is_dead[i]:
             dead_confirmed = True
+        elif exit_dead_ok[i] and pending_state == D:
+            # Confirmed live play invalidates pending stop evidence: two isolated stop frames
+            # separated by live play are not one stop. Keeps the current H/A label as-is.
+            pending_state, pending_frames = None, deque()
         if exit_dead_ok[i] and dead_confirmed:
             dead_confirmed = False
             if pending_state in (H, A) and current_state == D:
@@ -362,10 +377,12 @@ def decode(match, features, priors, config=None) -> Prediction:
             pending_state, pending_frames = this_candidate, deque([i])
 
         gated = this_candidate in (H, A) and current_state == D and dead_confirmed
+        # Ordinary dwell: bounded evidence age (evidence_window_s), still tolerant of occlusions.
+        window = settings.evidence_window_frames
         if gated:
             # The safety valve's whole justification is *sustained* evidence, categorically
             # different from brief proximity -- not "however many occurrences, however far
-            # apart." Decision 3's unbounded gap tolerance is deliberate for ordinary dwell (the
+            # apart." Ordinary dwell tolerates gaps within evidence_window_s (the
             # ball can be missing a while mid-possession without doubt creeping in about who had
             # it), but a fixed per-gap bound can't express "sustained" either: any positive bound
             # still lets a long enough chain of just-under-the-bound gaps span an arbitrary total
@@ -373,8 +390,8 @@ def decode(match, features, priors, config=None) -> Prediction:
             # sliding window does: only occurrences within the last `window` frames count, so the
             # count can never reflect more than `window` frames of real elapsed time.
             window = 2 * settings.latched_team_dwell_frames
-            while pending_frames and i - pending_frames[0] > window:
-                pending_frames.popleft()
+        while pending_frames and i - pending_frames[0] > window:
+            pending_frames.popleft()
 
         if this_candidate == D:
             required = settings.dead_dwell_frames

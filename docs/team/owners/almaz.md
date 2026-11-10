@@ -39,6 +39,11 @@
   documented local recipe with the same prediction config. Share totals only.
   Compare prior stop support separately from final decoder D labels before
   proposing behavior changes. Do not tune against a desired stoppage count.
+- Published implementation: `83d7bf7`, pushed to
+  `origin/e3/prior-coverage-diagnostics`. PR creation was attempted but GitHub
+  rejected `CreatePullRequest` for the connected account's permissions. A
+  teammate with PR permission must open the branch's review PR, naming E2/E4
+  as affected owners; no PR was created by this session.
 
 ## Historical handoff (2026-11-01, now merged)
 

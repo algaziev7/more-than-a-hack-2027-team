@@ -142,7 +142,9 @@ A sixth review (Almaz, on `96663a8`) found two more, both reproduced on syntheti
 confirmed live play didn't cancel a pending stop (two isolated `D` frames 25 live frames apart
 made a stop), and ordinary pending evidence never expired (a touch 40s old completed a
 turnover). Fixed: live play now discards a pending `D` candidate, and every candidate uses a
-sliding evidence window (`evidence_window_s`, 6s). Fifth amendment in the decision doc. The
+sliding evidence window (`evidence_window_s`, 6s). Fifth amendment in the decision doc. Beks's
+PR review raised the same live-play bug, plus overlapping live/dead thresholds letting proximity
+alone exit a stop; config now rejects `live_confirmed_threshold >= dead_threshold`. The
 real-match smoke test was not re-run for this change.
 
 ### Next exact action
@@ -159,7 +161,7 @@ don't treat as fixed constants" framing.
   `tests/e2_scenarios.py`, `tests/test_state_machine_validation.py`, the decision doc.
 - Reference: PR #6 (merged PR #7 into it), plus six follow-up commits for Decision 6 and its
   five amendments, on `e2/state-v1` -- not yet merged to `main`.
-- Verification: `python -m unittest discover -s tests` -- 142/142 pass (132 + 10 new for Decision
+- Verification: `python -m unittest discover -s tests` -- 144/144 pass (132 + 12 new for Decision
   6 and its amendments), Python 3.9 system interpreter. Real-match smoke test as above; not re-run
   after the fifth amendment.
 - Untested: anything against real E4 features; only a neutral placeholder so far.

@@ -337,6 +337,12 @@ anything:
    the 100-frame synthetic occlusion, short enough to exclude 40s-old support. Revisit with real
    occlusion-length data.
 
+Beks's PR #6 review found the same live-play bug independently (item 1 covers it). It also found
+that `live_confirmed_threshold >= dead_threshold` was accepted: one reliable stop clue then set and
+cleared the latch on the same frame, and proximity alone exited a confirmed stop (H at frame 54 in
+`H*30 + D*10 + H*20` with the threshold at 0.9). Config validation now requires
+`live_confirmed_threshold < dead_threshold`.
+
 Still open (policy, not a bug): confirmed live play with no reliable team stays `D`, which
 conflicts with `D` meaning stopped play. Needs a team decision.
 

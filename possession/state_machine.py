@@ -141,6 +141,10 @@ class StateMachineConfig:
                      "restart_evidence_threshold", "live_confirmed_threshold"):
             if not 0 <= getattr(self, name) <= 1:
                 raise ValueError("state_machine.{} must be in [0, 1]".format(name))
+        # A frame that is both "dead" and "confirmed live" would set and clear the Decision 6
+        # latch on the same frame, letting proximity alone exit a real stop (Beks's review).
+        if self.live_confirmed_threshold >= self.dead_threshold:
+            raise ValueError("state_machine.live_confirmed_threshold must be below dead_threshold")
 
     @property
     def dead_dwell_frames(self) -> int:

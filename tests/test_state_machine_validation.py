@@ -152,6 +152,20 @@ class StateMachineValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "evidence_window_s"):
             decode(*evidence_sequence("H"), {"state_machine": {"evidence_window_s": .5}})
 
+    def test_live_and_dead_thresholds_cannot_overlap(self):
+        # Beks's review: overlapping thresholds let one stop clue set and clear the latch.
+        for settings in ({"live_confirmed_threshold": .9},
+                         {"live_confirmed_threshold": .6, "dead_threshold": .6}):
+            with self.subTest(**settings):
+                with self.assertRaisesRegex(ValueError, "live_confirmed_threshold"):
+                    decode(*evidence_sequence("H"), {"state_machine": settings})
+
+    def test_live_play_between_stop_clues_does_not_enter_dead(self):
+        # Beks's review: isolated stops split by a restart and live play must not combine.
+        result = decode(*evidence_sequence(
+            "H" * 30 + "D" + "." * 4 + "R" * 6 + "." * 14 + "D" + "." * 20))
+        self.assertEqual(label_transitions(result.labels, start=30), [])
+
     def test_empty_single_and_excluded_frames(self):
         for symbols, half, expected in (("", [], ""), ("H", [1], "D"),
                                         ("HAD", [0, 0, 0], "XXX"),

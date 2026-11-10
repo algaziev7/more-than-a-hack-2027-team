@@ -103,7 +103,9 @@ the outer 44% of the 3 m control disc's area if positions were uniform
 (19% at 0.10, 28% at 0.15, 36% at 0.20). Contested distances and fast balls
 lower it further. The decoder also requires `team_margin_threshold = 0.15`
 on the same margin factor that reliability already contains, so margin is
-counted twice. Hypothesis, unmeasured: the 40% is mostly the proximity cap.
+counted twice. The proximity-cap hypothesis was wrong: Beks ran the
+breakdown locally (counts kept local) and the contested-margin factor, not
+proximity, is the main cause. Fast balls are a small share.
 
 Tooling: `reliability_breakdown(features, cutoff)` in `possession/features.py`
 assigns each low frame to "far", "contested" or "fast" (the first factor
@@ -118,10 +120,36 @@ separate margin check or the margin factor from reliability, so it is not
 counted twice. No labels exist to choose between them, so the argument must
 come from synthetic cases and coverage counts, never public-window scores.
 
+Proposed (E4, not yet agreed with E2): option (c), drop the margin factor so
+`reliability = proximity * speed_weight` and let the decoder's
+`team_margin_threshold` alone judge contested frames. Synthetic geometry
+(slow ball, decoder margin 0.15) under current / (a) cutoff 0.15 / (c):
+
+| Nearest, other team | Margin | Current | (a) | (c) |
+|---|---|---|---|---|
+| 1.0 m, 2.0 m | 0.33 | no | yes | yes |
+| 1.5 m, 2.5 m | 0.25 | no | no | yes |
+| 2.0 m, 6.0 m | 0.50 | no | yes | yes |
+| 0.5 m, 0.7 m | 0.17 | no | no | yes |
+| 1.0 m, 1.2 m | 0.09 | no | no | no |
+| 2.4 m, 9.0 m | 0.58 | no | no | no |
+
+Argument: a player 1 m from the ball with the nearest opponent 2 m away is
+ordinary possession, and the current rule rejects it because the same margin
+is penalised twice. (c) states each fact once: reliability says how much to
+trust the geometry, margin says how decisive it is. (a) only shifts the
+cutoff and still double-counts. Risks: (c) accepts close duels just above
+margin 0.15 (row 4), and in contested frames tracking keeps high reliability
+with evidence near 0.5, so in the reliability-weighted fusion it outweighs a
+tag instead of letting the tag fill the gap. That interacts with E2's
+planned "tags fill gaps" fusion change and must be decided together.
+Reliability is a shared interface, so E2 agrees before E4 changes it.
+
 ## Next exact action
 
-Beks runs `python scripts/reliability_breakdown.py --config <config>`
-locally on the match and keeps the numbers local. Then Beks and Belek pick
-one option above and record the reasoning for the selection argument in the
-technical document. Almaz re-reviews PR #6 so it can merge. After E1 produces
-the final CSV, Beks runs `scripts/check_solution.py` on that exact file.
+Beks sends Belek the proposal above. If Belek agrees, Beks changes
+`build_features` on this branch, updates the synthetic tests, reruns the
+breakdown locally (counts stay local), and opens the PR with E2 and E3
+notified. Belek decides how fused evidence treats contested tracking.
+Almaz re-reviews PR #6 so it can merge. After E1 produces the final CSV,
+Beks runs `scripts/check_solution.py` on that exact file.

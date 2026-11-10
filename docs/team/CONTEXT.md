@@ -1,65 +1,68 @@
 # Project context
 
-Updated: 2026-11-01.
+Updated: 2026-11-10. Checked main at `3197721`; E5 additions below are branch
+work awaiting review, not merged progress.
 
-## What is merged
+## Merged implementation
 
-- Team repo: https://github.com/algaziev7/more-than-a-hack-2027-team.
-  origin is the team repo; upstream is the organiser repo.
-- PR #1: Almaz's event-tag clues and synthetic tests.
-- PR #2: Azamat's loader, shared types, export, setup, and invocation code.
-- PR #3: Belek and Isken's validation plan. This is documentation; the state
-  machine itself is not in this checkout.
-- PR #4: Almaz's tagging adapter returns Azamat's PriorData format.
-- Azamat and Almaz reported successful local data-loading runs. Those confirm
-  execution, not possession accuracy. No private outputs were read here.
-- The official scorer, validator, public answer file, and baselines are unchanged.
+- Team repository: https://github.com/algaziev7/more-than-a-hack-2027-team.
+  The API reports private visibility. Final release requires a public repository.
+- PR #1/#4: Almaz's tagging clues and shared PriorData adapter.
+- PR #2: Azamat's canonical contracts, loader/cache, deterministic export, CLI
+  and synthetic environment/setup checks.
+- PR #3: Belek and Isken's validation plan.
+- PR #5: Almaz's combined motion/tagging stoppage and restart priors.
+- PR #8: Beks's tracking features and official-validator wrapper.
+- PR #9: Azamat's cross-platform configuration-path fix and method section.
+- Official evaluation code, answer files and supplied baselines are unchanged.
+  Main passes 111 synthetic tests in the inspected Python 3.12.12 environment.
 
-## Current branch — not merged
+Azamat/Almaz previously reported local data loading. Those reports establish
+execution only. No private output was read in this E5 session, and no complete
+team prediction or accuracy improvement is established here.
 
-`almaz/dead-ball-priors` adds `possession.dead_ball.build_priors(match, features,
-config)`. It returns tagging clues plus conservative stopped/live-play evidence
-and a motion-supported restart pulse. FeatureData is optional; no new shared
-fields or feature names are introduced.
+## Review branches
 
-The full synthetic suite passed 97 tests, including 33 new scenarios. Review,
-authorised local real-data execution, and integrated accuracy checks are still
-pending. Read [DEAD_BALL.md](DEAD_BALL.md) and [Almaz's handoff](owners/almaz.md).
+E2's [PR #6](https://github.com/algaziev7/more-than-a-hack-2027-team/pull/6)
+contains `possession.state_machine.decode`; inspected revision `9883b4d`.
+It is absent from main. Read E2's handoff on that branch; the
+[merged handoff](owners/belek_isken.md) still describes the older validation-plan
+stage. The unresolved live-play/unknown-team behavior needs E2/E3/E4 agreement.
 
-## Owners
+[E5 PR #10](https://github.com/algaziev7/more-than-a-hack-2027-team/pull/10)
+(`e5/pipeline-v1`, implementation `6985721`) adds thin loader -> features -> priors -> decoder wiring,
+cross-stage checks, local run manifests, synthetic Ubuntu/Windows CI, a PR
+template, artifact filename/ignore guards, and team/technical/release docs.
+Missing E2 fails before assets are read. Missing/disabled tags remain supported.
+No shared signatures, fields or configuration sections changed. Hosted synthetic
+CI passed on Ubuntu and Windows for this implementation. See
+[Goblin's handoff](owners/goblin.md) for actual test evidence and next steps.
 
-| Person | Work |
-|---|---|
-| Azamat | Data, shared types, environment, and export |
-| Belek and Isken | Possession state machine and its tests |
-| Almaz | Event tags and stoppage/restart evidence |
-| Beks | Tracking features and evaluation |
-| Goblin agents | Integration and docs; Azamat reviews |
+## Remaining gates
 
-One shared repo, separate laptop clones and task branches. Each owner maintains
-their handoff. A branch implementation is not integrated until reviewed/merged.
+1. E1 reviews E5; E4 reviews/merges E2. Confirm the combined pipeline on
+   synthetic inputs. Hosted CI must require no restricted assets or credentials.
+2. An authorised teammate runs the complete system locally and E4 validates
+   the exact CSV. A second laptop independently reproduces identical CSV bytes.
+3. Owners confirm method/training provenance; finalise the
+   [technical draft](TECHNICAL_DOCUMENT.md) and [release package](RELEASE.md).
+4. A repository admin configures protection (main is currently unprotected) and
+   makes the repository public after the data/history audit. The connected E5
+   account has push/triage access, no admin access. No settings were changed.
+5. The designated human submitter uploads the frozen team-named file/document
+   and records confirmation. Registered team name is not in the checked context.
 
-## Remaining work
+## Rules and ownership
 
-- Review the stoppage module and connect its evidence to the state machine.
-- Add Beks's features, the state machine, and the complete pipeline. These are
-  not present on main inspected for this update. Check teammates' latest work
-  before editing their files.
-- Run the complete system, validate its CSV, and reproduce it on another laptop.
-  No complete team prediction or measured accuracy improvement is established.
-- Keep the technical document aligned with the implemented method.
+Output all 199,319 tactical-frame labels: H Barcelona, A Athletic, D stopped
+play, X no answer. Ranking uses spellF1. The documented deadline is November 17,
+2026; verify updates through registration. Public five-minute labels are pipeline
+checks only, never training, tuning, selection or evidence of an accuracy gain.
 
-## Task and rules
-
-Output 199,319 tactical-frame labels: H Barcelona, A Athletic, D stopped play,
-X no answer. Ranking uses spellF1. Submit a CSV, public reproducible repository,
-and short technical document. Documented deadline: November 17, 2026; check
-organiser updates through the registration channel.
-
-The public five-minute answer file is for pipeline checks, never training,
-tuning, or model selection. Hosted AI/CI use synthetic inputs. Actual assets,
-extracts, private arrays, and detailed reports stay local and outside Git.
-Each person sets MTAH_DATA_DIR locally.
-
-Read TEAM_PLAN.md for ownership, INTERFACES.md for shared fields, WORKFLOW.md
-for branches/handoffs, and SETUP.md for the team environment.
+Hosted AI/CI uses public schemas and synthetic inputs. Restricted assets,
+extracts, arrays, predictions and detailed manifests remain local and ignored.
+Each laptop sets MTAH_DATA_DIR privately. Follow [TEAM_PLAN.md](../../TEAM_PLAN.md),
+[INTERFACES.md](INTERFACES.md), [WORKFLOW.md](WORKFLOW.md) and the owner handoffs.
+E1 owns data/export/CLI/contracts, E2 decoding, E3 priors, E4 features/validation,
+E5 integration/docs/CI. Azamat reviews E5. Shared files and reviewed commits,
+not this conversation, are the team's memory.

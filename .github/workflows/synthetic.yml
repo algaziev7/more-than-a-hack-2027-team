@@ -1,0 +1,37 @@
+name: Synthetic checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic:
+    name: synthetic (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    env:
+      PYTHONHASHSEED: "0"
+      MTAH_DATA_DIR: "__synthetic_only_no_match_bundle__"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-team.lock
+      - run: python -m pip install -r requirements-team.lock
+      - run: python -m pip check
+      - run: python -m unittest discover -s tests -v
+      - run: python scripts/check_setup.py
+      - name: Python indentation and whitespace
+        run: |
+          python -m tabnanny possession scripts tests
+          git diff --check HEAD
+      - name: Keep local artifacts out of tracked files
+        run: python .github/check_repository.py

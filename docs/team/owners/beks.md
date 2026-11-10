@@ -1,11 +1,11 @@
 # Beks — Tracking features and evaluation
 
 - Owner: Beks
-- Status: v1 implemented and verified on synthetic inputs
-- Branch: `e4/features-v1`
+- Status: v1 merged (PR #8); reliability diagnosis in progress
+- Branch: `e4/reliability-v1` (v1 was `e4/features-v1`)
 - Reviewer: E3
 - Owned files: `possession/features.py`, `scripts/check_solution.py`, feature tests and evaluation policy
-- Last update: 2026-11-09
+- Last update: 2026-11-10
 
 ## Feature handoff
 
@@ -80,10 +80,48 @@ pipeline config and v1 uses fixed constants. E2 owns persistence and labels.
 - Keep restricted assets, extracts and private diagnostics local and out of
   Git and hosted AI tools. Full-match accuracy and improvement are unverified.
 
+## PR #6 re-review (2026-11-10)
+
+Approved head `9883b4d`. Both findings above are fixed with regression tests:
+confirmed live/restart evidence clears pending D, and
+`live_confirmed_threshold >= dead_threshold` is rejected. The new 6 s
+`evidence_window_s` is validated against every dwell. Merged locally with
+`main` at `aa73103`, all 174 tests passed. Non-blocking, read from code and not
+tested: the restart route can still set and clear the Decision 6 latch on one
+frame if `dead_evidence >= 0.6 + 0.5 * restart_evidence` while
+`restart_evidence >= 0.6`. Almaz to confirm E3 never emits that.
+
+## Reliability below the 0.25 cutoff (diagnosis, 2026-11-10)
+
+The coverage run reported about 40% of frames with tracking evidence below
+the decoder's `team_reliability_min = 0.25`. Reliability is the product
+`proximity * margin * speed_weight`, each in [0, 1], with
+`proximity = 1 - nearest / 3 m`. Structural finding, from the formula and
+not from match data: with cutoff c, a nearest player beyond `3 * (1 - c)` m
+can never count, however far the other team is. At 0.25 that is 2.25 m,
+the outer 44% of the 3 m control disc's area if positions were uniform
+(19% at 0.10, 28% at 0.15, 36% at 0.20). Contested distances and fast balls
+lower it further. The decoder also requires `team_margin_threshold = 0.15`
+on the same margin factor that reliability already contains, so margin is
+counted twice. Hypothesis, unmeasured: the 40% is mostly the proximity cap.
+
+Tooling: `reliability_breakdown(features, cutoff)` in `possession/features.py`
+assigns each low frame to "far", "contested" or "fast" (the first factor
+that takes the product under the cutoff). `scripts/reliability_breakdown.py`
+runs it locally and prints aggregate counts only. Synthetic test:
+`test_reliability_breakdown_names_the_factor_that_drops_each_frame`.
+
+Options to decide with Belek (E2), none selected: (a) keep the formula and
+lower the cutoff; (b) make proximity a gentler ramp (for example full weight
+inside 1 m) so a lone nearby player still counts; (c) drop the decoder's
+separate margin check or the margin factor from reliability, so it is not
+counted twice. No labels exist to choose between them, so the argument must
+come from synthetic cases and coverage counts, never public-window scores.
+
 ## Next exact action
 
-Almaz reviews the feature thresholds and evidence semantics. Belek and Isken
-review the pending-D counterexample. E5 wires the feature builder into the
-pipeline, then an authorised teammate can run a local match smoke test and
-validate the exact CSV. The timeboxed search for eligible other-match labels
-and accuracy validation remain open.
+Beks runs `python scripts/reliability_breakdown.py --config <config>`
+locally on the match and keeps the numbers local. Then Beks and Belek pick
+one option above and record the reasoning for the selection argument in the
+technical document. Almaz re-reviews PR #6 so it can merge. After E1 produces
+the final CSV, Beks runs `scripts/check_solution.py` on that exact file.

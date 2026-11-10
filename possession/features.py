@@ -101,3 +101,26 @@ def build_features(match, config=None) -> FeatureData:
         match.frame.copy(), features, {name: np.isfinite(value) for name, value in features.items()},
         np.column_stack((home_support, 1 - home_support)), reliability,
     )
+
+
+def reliability_breakdown(features: FeatureData, cutoff: float = 0.25) -> dict:
+    """Aggregate counts of why frames with tracking evidence fall below `cutoff`.
+
+    Each low frame gets the first factor of reliability = proximity * margin * speed
+    that takes the running product below the cutoff: "far" (nearest player alone
+    too far, i.e. beyond CONTROL_RADIUS_M * (1 - cutoff)), "contested" (teams at
+    similar distances) or "fast" (ball speed above FAST_BALL_MPS). Counts only.
+    """
+    reliability = features.team_reliability
+    home = features.features["home_nearest_m"]
+    away = features.features["away_nearest_m"]
+    with np.errstate(invalid="ignore"):
+        proximity = 1 - np.fmin(home, away) / CONTROL_RADIUS_M
+        margin = np.abs(away - home) / (home + away)
+    evidence = reliability > 0
+    low = evidence & (reliability < cutoff)
+    far = low & (proximity < cutoff)
+    contested = low & ~far & (proximity * margin < cutoff)
+    return {"tracking_frames": int(evidence.sum()), "below_cutoff": int(low.sum()),
+            "far": int(far.sum()), "contested": int(contested.sum()),
+            "fast": int((low & ~far & ~contested).sum())}

@@ -5,7 +5,7 @@ import numpy as np
 
 from possession.contracts import MatchData
 from possession.dead_ball import build_priors
-from possession.features import build_features
+from possession.features import build_features, reliability_breakdown
 from tests.fixtures import synthetic_match
 
 
@@ -160,3 +160,20 @@ class TrackingFeatureTests(unittest.TestCase):
         out = build_features(replace(match, slot_team=np.array(["H", "H", "H"])))
         self.assertFalse(out.validity["away_nearest_m"][0])
         np.testing.assert_array_equal(out.team_reliability, 0)
+
+    def test_reliability_breakdown_names_the_factor_that_drops_each_frame(self):
+        # Separate halves isolate frames, so only the supplied raw speed matters.
+        far_slot = [50, 50]
+        players = [[[10.5, 20], [20, 20], far_slot],    # reliable: 0.83 * 0.90
+                   [[12.4, 20], [99, 60], far_slot],    # far: nearest 2.4 m > 2.25 m
+                   [[11, 20], [11.5, 20], far_slot],    # contested: 0.67 * 0.2
+                   [[10.5, 20], [20, 20], far_slot],    # fast: 32 m/s quarters it
+                   [[30, 20], [40, 20], far_slot]]      # no evidence beyond 3 m
+        match = tracking([[10, 20]] * 5, players, half=[1, 2, 1, 2, 1],
+                         speed=[0, 0, 0, 32, 0])
+        out = build_features(match)
+        self.assertGreaterEqual(out.team_reliability[0], .25)
+        self.assertEqual(reliability_breakdown(out), {
+            "tracking_frames": 4, "below_cutoff": 3, "far": 1, "contested": 1, "fast": 1})
+        # Proximity alone caps reliability: beyond 2.25 m no opponent distance reaches 0.25.
+        self.assertLess(out.team_reliability[1], .25)

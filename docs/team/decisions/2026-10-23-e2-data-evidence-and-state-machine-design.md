@@ -388,6 +388,39 @@ during an occlusion. If the comparison run shows that, restrict tag-only frames 
 never resetting. Selection between variants uses synthetic cases and coverage counts, not labels
 or the public window.
 
+## Decision 8 — 1 s team dwell for controlled possession, with backdated boundaries (2026-11-11)
+
+**Evidence.** A local four-way run (aggregate counts only) of main, E4 #14, this branch's Decision
+7 and both together showed both changes add possessions (147 -> 383 combined), most of them short
+(108 under 2 s combined). A bounce-back count added to the local smoke script showed 98 of those
+108 snap back to the team that had the ball before, and only 7 of 84 with tracking support were
+won on a near-tie margin (< 0.30). So they are brief, clear opposing touches or approaches, not
+close duels; Decision 7's contested pause already handles duels.
+
+**Rule, from the definition, not from the counts.** CHALLENGE.md: a change of possession needs
+*controlled* possession ("a player keeps the ball for a few seconds"); "a simple touch of the ball
+without control", "a deflection of a pass that does not intercept it" and "an aerial duel won
+without subsequent control" do not count. 0.6 s of support is less than that, so `team_dwell_s`
+becomes 1.0 s (25 frames at 25 fps). Fewer short spells afterwards is not evidence for the value:
+a longer dwell removes them by construction.
+
+**Backdating.** A longer dwell is also a longer delay (EVALUATION.md: 1 s late costs about a third
+of spellF1). The definition puts the boundary at "the moment possession passes", i.e. the first
+frame of the new team's control, not the moment we become confident. So when a change is
+confirmed, the frames from its first supporting frame up to confirmation are relabelled. Only
+paused frames or support for that candidate can lie in between (any other candidate restarts the
+count), so nothing else is overwritten. Not applied to the Decision 6 safety valve: team evidence
+alone ending a confirmed stop is too weak to move the stop's end earlier. Not applied to `D`
+either (found on review): its 2-frame dwell costs about one frame, while backdating could relabel
+up to `evidence_window_s` of unobserved play as a stoppage between two stray dead frames. Each transition now
+records `frame` (the boundary) and `confirmed_frame`.
+
+**Effect on the synthetic timing table** (`python -m tests.e2_scenarios`): boundary errors fall
+for team changes from +14 / +15 frames to 0; stops stay +1 (their own dwell), restarts stay +1 (the frame carrying the restart proof has no team);
+a 24-frame possession is now missed where a 14-frame one was. Isken's independent reference model
+backdates too and still agrees on all 5,461 exhaustive and 200 seeded sequences. Real-match effect
+not measured yet: rerun the comparison.
+
 ## Explicitly deferred (not forgotten, not yet needed)
 
 - No vectorization of the per-frame loop — 199k frames is cheap in plain Python; confirmed at

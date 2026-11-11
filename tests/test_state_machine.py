@@ -19,7 +19,9 @@ from possession.contracts import Prediction
 from possession.state_machine import A, D, H, X, StateMachineConfig, decode
 from tests.fixtures import neutral_features, neutral_priors, synthetic_match
 
-CONFIG = StateMachineConfig()  # fps=25 -> dead_dwell_frames=2, team_dwell_frames=15
+CONFIG = StateMachineConfig()  # fps=25 -> dead_dwell_frames=2, team_dwell_frames=25
+W = CONFIG.team_dwell_frames
+LEAD = W + 5  # home evidence long enough to establish H before the event under test
 # decode() takes the shared pipeline config dict (see possession.state_machine._section), not a
 # StateMachineConfig directly. CONFIG's values are the defaults, so `None` behaves identically --
 # it's kept here purely to compute expected frame offsets (e.g. CONFIG.team_dwell_frames) below.
@@ -80,38 +82,38 @@ class StateMachineTests(unittest.TestCase):
 
     def test_brief_deflection_does_not_flip_possession(self):
         """A short contrary touch (well under team_dwell_frames) must not change the label."""
-        n = 50
+        n = LEAD + 20
         features, priors = _establish_home(n)
-        blip = slice(20, 25)  # 5 frames, team_dwell_frames is 15
+        blip = slice(LEAD, LEAD + 5)  # 5 frames, well under team_dwell_frames
         features.team_evidence[blip] = [0.05, 0.95]
         features.team_reliability[blip] = 0.9
         labels = _run(_match(n), features, priors)
-        # Skip the unavoidable D warm-up every half starts in (see Decision 2); the blip itself
-        # sits well after it, so this still proves the blip alone never causes a flip.
-        self.assertTrue(np.all(labels[CONFIG.team_dwell_frames:] == H), labels)
+        # Decision 8: H is backdated to frame 0, so the whole half is H despite the blip.
+        self.assertTrue(np.all(labels == H), labels)
 
     def test_sustained_turnover_flips_possession(self):
         """Evidence for the other team held past team_dwell_frames must flip the label."""
-        n = 60
+        n = LEAD + W + 10
         features, priors = _establish_home(n)
-        turnover = slice(20, 45)  # 25 frames, well past the 15-frame dwell
+        turnover = slice(LEAD, n)  # W + 10 frames, past the dwell
         features.team_evidence[turnover] = [0.05, 0.95]
         features.team_reliability[turnover] = 0.9
         labels = _run(_match(n), features, priors)
-        self.assertTrue(np.all(labels[40:45] == A), labels)
+        # Decision 8: the boundary sits at the first A frame, not W frames later.
+        self.assertTrue(np.all(labels[:LEAD] == H), labels)
+        self.assertTrue(np.all(labels[LEAD:] == A), labels)
 
     def test_short_but_real_possession_is_captured(self):
         """Contrast with the deflection case: evidence held just past the dwell IS a possession."""
-        n = 70  # long enough for A to register AND for H to earn its own dwell back afterwards
+        short_spell = slice(LEAD, LEAD + W + 2)  # just over the dwell
+        n = short_spell.stop + W + 5  # long enough for H to earn its own dwell back afterwards
         features, priors = _establish_home(n)
-        short_spell = slice(20, 37)  # 17 frames, just over the 15-frame dwell
         features.team_evidence[short_spell] = [0.05, 0.95]
         features.team_reliability[short_spell] = 0.9
         labels = _run(_match(n), features, priors)
-        self.assertIn(A, labels[short_spell], "a 17-frame hold should register, unlike a blip")
-        # Home evidence resumes at frame 37 but needs its own team_dwell_frames to take effect
-        # (37 + 15 = 52), so the "back to home" check has to sit safely after that, not right at 45.
-        self.assertTrue(np.all(labels[55:] == H), "and possession should return to home after")
+        # Decision 8: both boundaries land exactly where the evidence changes.
+        self.assertTrue(np.all(labels[short_spell] == A), labels)
+        self.assertTrue(np.all(labels[short_spell.stop:] == H), labels)
 
     def test_stoppage_is_detected_as_dead(self):
         """Reliable dead-ball evidence held past dead_dwell_frames must produce D."""
@@ -132,13 +134,13 @@ class StateMachineTests(unittest.TestCase):
         stoppage ends stands in for that proof (a tag window or E3's own live-motion
         confirmation, in reality); without it this stoppage would never end at all.
         """
-        n = 70
+        stoppage = slice(LEAD, LEAD + 15)
+        n = stoppage.stop + W + 10
         features, priors = _establish_home(n)
-        stoppage = slice(20, 35)
         priors.dead_evidence[stoppage] = 0.95
         priors.dead_reliability[stoppage] = 0.9
         features.team_reliability[stoppage] = 0.0
-        priors.restart_evidence[35] = 0.75
+        priors.restart_evidence[stoppage.stop] = 0.75
         labels = _run(_match(n), features, priors)
 
         # Drop the unavoidable D warm-up every half starts in (Decision 2) before encoding runs,
@@ -162,15 +164,15 @@ class StateMachineTests(unittest.TestCase):
 
     def test_noisy_flicker_does_not_flip_possession(self):
         """Per-frame alternating strong evidence never accumulates a consecutive run."""
-        n = 60
+        n = LEAD + 40
         features, priors = _establish_home(n)
-        noisy = range(20, 50)
+        noisy = range(LEAD, LEAD + 30)
         for i in noisy:
             home_now = (i % 2 == 0)
             features.team_evidence[i] = [0.95, 0.05] if home_now else [0.05, 0.95]
             features.team_reliability[i] = 0.9
         labels = _run(_match(n), features, priors)
-        self.assertTrue(np.all(labels[CONFIG.team_dwell_frames:] == H), labels)
+        self.assertTrue(np.all(labels == H), labels)
 
     def test_player_standing_near_ball_does_not_resume_a_confirmed_stop(self):
         """Decision 6 (2026-11-09), found by Almaz: the throw-in scenario.
@@ -304,10 +306,13 @@ class StateMachineTests(unittest.TestCase):
         live_motion_confirmation = 40  # unrelated to the turnover; just happens to land inside it
         priors.dead_evidence[live_motion_confirmation] = 0.1
         priors.dead_reliability[live_motion_confirmation] = 0.5
-        labels = _run(_match(n), features, priors)
-        # 31 + team_dwell_frames(15) - 1 = 45: on schedule, not delayed by the stray blip.
-        self.assertTrue(np.all(labels[31:45] == H), labels[31:45])
-        self.assertTrue(np.all(labels[45:] == A), labels[45:])
+        result = decode(_match(n), features, priors)
+        # Confirmed on schedule (31 + W - 1), not delayed by the stray blip; Decision 8 then
+        # backdates the boundary to the turnover's first frame.
+        (event,) = result.diagnostics["transitions"][1:]
+        self.assertEqual((event["frame"], event["confirmed_frame"]), (31, 31 + W - 1))
+        self.assertTrue(np.all(result.labels[:31] == H), result.labels[:31])
+        self.assertTrue(np.all(result.labels[31:] == A), result.labels[31:])
 
     def test_latch_does_not_survive_a_safety_valve_exit_into_a_later_turnover(self):
         """Companion to the above: the latch must not persist past the D period it belongs to
@@ -351,9 +356,9 @@ class StateMachineTests(unittest.TestCase):
         turnover (well past team_dwell_frames in total decisive support) could fail to register at
         all -- exactly the scenario a 41%-missing-ball match produces routinely.
         """
-        n = 70
+        n = LEAD + 55
         features, priors = _establish_home(n)
-        turnover = range(20, 50)  # 30 frames, but every 3rd one is a missing-evidence gap
+        turnover = range(LEAD, LEAD + 45)  # 30 decisive frames, every 3rd one is a gap
         for i in turnover:
             if i % 3 == 0:
                 features.team_reliability[i] = 0.0  # a gap: no decisive signal this frame
@@ -362,30 +367,25 @@ class StateMachineTests(unittest.TestCase):
                 features.team_reliability[i] = 0.9
         labels = _run(_match(n), features, priors)
         self.assertIn(A, labels[list(turnover)], "the turnover must still be detected")
-        # Checked near the end of the turnover window, before home evidence resumes at frame 50
-        # and earns its own dwell back -- this isolates "did the gappy turnover register at all".
-        self.assertTrue(np.all(labels[45:50] == A), labels)
+        # Checked near the end of the turnover window, before home evidence resumes and earns
+        # its own dwell back -- this isolates "did the gappy turnover register at all".
+        self.assertTrue(np.all(labels[LEAD + 40:LEAD + 45] == A), labels)
 
     def test_half_reset_defaults_to_dead_not_carried_state(self):
         """Second half starts at D regardless of how half one ended, and needs its own dwell."""
-        n1, gap, n2 = 30, 5, 30
-        half = np.concatenate([np.full(n1, 1), np.full(gap, 0), np.full(n2, 2)])
-        n = len(half)
-        match = SimpleNamespace(frame=np.arange(n), half=half)
-
-        features = _features(n, team_h=0.95, team_rel=0.9)  # strong home evidence throughout
-        priors = _priors(n)
-
-        labels = decode(match, features, priors).labels
-        self.assertTrue(np.all(labels[n1:n1 + gap] == X), "ungraded gap must stay X")
-
-        second_half_start = n1 + gap
-        warmup_end = second_half_start + CONFIG.team_dwell_frames
-        self.assertTrue(
-            np.all(labels[second_half_start:warmup_end - 1] == D),
-            "second half must not inherit home possession or jump to it before its own dwell",
-        )
-        self.assertTrue(np.all(labels[warmup_end:] == H), "but should settle into H once earned")
+        for n2, expected in ((W - 1, D), (W + 5, H)):
+            with self.subTest(n2=n2):
+                n1, gap = 30, 5
+                half = np.concatenate([np.full(n1, 1), np.full(gap, 0), np.full(n2, 2)])
+                n = len(half)
+                match = SimpleNamespace(frame=np.arange(n), half=half)
+                features = _features(n, team_h=0.95, team_rel=0.9)  # strong home evidence throughout
+                labels = decode(match, features, _priors(n)).labels
+                self.assertTrue(np.all(labels[:n1] == H), "first half earns H (backdated)")
+                self.assertTrue(np.all(labels[n1:n1 + gap] == X), "ungraded gap must stay X")
+                # W - 1 frames of home evidence cannot earn H: no inheritance from half one.
+                # W + 5 frames earn it, backdated to the second half's first frame.
+                self.assertTrue(np.all(labels[n1 + gap:] == expected), labels[n1 + gap:])
 
 
 class RealContractsCompatibilityTests(unittest.TestCase):

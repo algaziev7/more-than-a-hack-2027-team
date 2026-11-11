@@ -6,7 +6,7 @@
 - Reviewer: E4
 - Owned files: possession/state_machine.py; state-machine configuration and tests
 - Current milestone: synthetic decoder validation and E3/export integration
-- Last update: 2026-11-11 (Belek's track)
+- Last update: 2026-11-11 (Belek's track, Decision 8)
 
 ## Pair coordination
 
@@ -119,6 +119,27 @@ factor), agreed by message.
   frames should also stop resetting a tracking-based pending turnover.
 - E3 impact: unaffected directly; Beks's (c) changes E3's control check (reliability >= 0.5),
   so Almaz should review that PR.
+
+### Decision 8 on the same branch (2026-11-11)
+
+Beks's four-way run and the new bounce-back count (aggregates, run locally) showed most added
+short possessions are brief clear opposing touches that snap straight back, not close duels.
+CHALLENGE.md requires controlled possession, so `team_dwell_s` is now 1.0 s, and confirmed changes
+are backdated to their first supporting frame (not D, not the safety valve), so the longer dwell does
+not delay boundaries. Merged `main` (E4 #14, tooling #15) first.
+
+- Tests: Isken's reference model gained backdating and still agrees on all exhaustive and seeded
+  sequences; two new tests (backdating spans paused frames only, respects window trimming, never
+  backdates D; safety valve not backdated). Pre-commit review: an instrumented decoder checked the
+  no-overwrite invariant on 3,000 random sequences (4,495 backdates, no violation).
+  Timing-dependent tests now assert `confirmed_frame`; tests with 15-frame assumptions were
+  re-derived for 25. Two E5 pipeline tests (`tests/test_pipeline.py`) updated for the new
+  boundaries, flagged for Goblin/Azamat. 190/190 pass on Python 3.12.16.
+- Open, outside this change: the second half is graded ~2,934 frames before its kickoff, and
+  player proximity at the centre spot reads as possession there (already true before Decision 8,
+  now from the half's first frame). Team decision needed: treat each half start like a
+  confirmed stop?
+- Unmeasured: real-match effect. Next: rerun the local comparison (main vs this branch).
 
 ## Belek's track (`e2/state-v1`, merged)
 

@@ -19,7 +19,8 @@ docs/team/decisions/2026-10-23-e2-data-evidence-and-state-machine-design.md. Sum
 
 - Evidence is a (value, reliability) pair, never a hard per-frame guess (see Decision 1 there).
 - This is a hysteresis state machine, not a per-frame classifier smoothed afterwards: a candidate
-  state must win for `dwell_frames` *occurrences* before the state actually switches.
+  state must win for `dwell_frames` *occurrences* before a change is confirmed (team changes are
+  then backdated to their first supporting frame, Decision 8).
 - Dead and team transitions get separate dwell lengths (dead shorter -- stoppages are often
   announced cleanly; team changes need more sustained proof).
 - Every half starts in D. Correct for the second half (graded before its own kickoff); merely
@@ -53,6 +54,10 @@ docs/team/decisions/2026-10-23-e2-data-evidence-and-state-machine-design.md. Sum
   reliability clears `team_reliability_min` decides the frame alone: decisive tracking votes,
   contested tracking (a duel) gives no candidate. Tags fill only frames where tracking is below
   that floor. `diagnostics["team_sources"]` counts graded frames decided each way.
+- Decision 8: a team change needs `team_dwell_s` = 1.0 s of support, because CHALLENGE.md
+  requires *controlled* possession, not a touch or deflection. The dwell decides whether a team
+  change happened; the boundary is then backdated to its first supporting frame (not for D, and
+  not for the Decision 6 safety valve). Each transition records `frame` (boundary) and `confirmed_frame`.
 
 `config` follows the same convention as `dead_ball.DeadBallConfig` / `tagging.TaggingConfig`: the
 caller passes the *whole* shared pipeline dict, and this module reads only its own
@@ -86,9 +91,11 @@ class StateMachineConfig:
     fps: float = 25.0
 
     # Hysteresis: occurrences (not necessarily consecutive, see Decision 3) a candidate needs
-    # before the state actually switches.
+    # before a change is confirmed (team changes are then backdated, Decision 8).
     dead_dwell_s: float = 0.08   # ~2 frames -- Almaz's prior already waits ~0.6s, see Decision 5
-    team_dwell_s: float = 0.60   # ~15 frames -- a turnover should need more than a touch
+    # CHALLENGE.md: a change needs *controlled* possession ("a player keeps the ball for a few
+    # seconds"); a touch, deflection or won duel without control does not count. Decision 8.
+    team_dwell_s: float = 1.0    # 25 frames at 25 fps; latency is undone by backdating
 
     # Dead/alive decision.
     dead_threshold: float = 0.6        # priors.dead_evidence needed to call a frame "dead"
@@ -450,8 +457,17 @@ def decode(match, features, priors, config=None) -> Prediction:
         else:
             required = settings.team_dwell_frames
         if len(pending_frames) >= required:
+            # Decision 8: for a team change the dwell decides *whether* it happened; the boundary
+            # goes back to its first supporting frame, where the definition puts it. Every frame
+            # in between was paused or supported this candidate, so nothing else is overwritten.
+            # Not for the safety valve (team evidence alone ending a confirmed stop is too weak),
+            # nor for D: its 2-frame dwell costs ~1 frame, while backdating could turn up to
+            # evidence_window_s of unobserved play into a stoppage between two stray dead frames.
+            start = pending_frames[0] if this_candidate != D and not gated else i
+            labels[start:i] = this_candidate
             transitions.append({
-                "frame": int(match.frame[i]) if hasattr(match, "frame") else i,
+                "frame": int(match.frame[start]) if hasattr(match, "frame") else start,
+                "confirmed_frame": int(match.frame[i]) if hasattr(match, "frame") else i,
                 "from_state": current_state, "to_state": this_candidate,
                 "reason": "{} decisive occurrences for the new candidate".format(len(pending_frames)),
             })

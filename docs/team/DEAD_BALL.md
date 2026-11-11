@@ -22,12 +22,14 @@ Save baseline and candidate totals separately locally; use 0 for the baseline.
 
 The detector still requires `ceil(stop_duration_s * fps)` observed supporting
 frames. Missing observations emit neutral dead/live evidence and never advance
-confirmation. A stop run may retain its support through at most
+confirmation. A pending stop run may retain its support through at most
 `floor(max_missing_gap_s * fps)` missing frames **in total**, including repeated
 gaps; exceeding that budget resets the run and restart context. Thus intermittent
-observations cannot accumulate indefinitely. With no pending stop run, retained
-restart context tolerates only that many consecutive missing observations and
-still expires according to the existing wall-clock `restart_context_s`.
+observations cannot accumulate indefinitely toward a new confirmation. Confirmation
+clears the cumulative budget. A confirmed stop tolerates repeated gaps, each no
+longer than that same limit, provided every reacquired observation still supports
+the stop. With no pending stop run, retained restart context also uses only the
+per-gap limit and still expires according to the wall-clock `restart_context_s`.
 
 On reacquisition, displacement from the last usable position must also fit the
 stationary-speed bound over elapsed time to retain pending stop support. A
@@ -46,7 +48,7 @@ Review this tradeoff with E2/E4 before enabling it in a frozen submission.
 Long unobserved stoppages and still balls lacking contextual support remain
 unresolved. More D frames alone do not establish better predictions.
 
-Synthetic verification: 50 E3 tests pass, including ten new gap-policy tests.
+Synthetic verification: 53 E3 tests pass, including thirteen gap-policy tests.
 No restricted-data experiment or public-label tuning was performed.
 
 This is an untuned first version. It can suggest that play is stopped or live;
@@ -277,12 +279,13 @@ explain gates, not the number of actual referee stoppages missed.
 
 `confirmed_stop_run_share_followed_by_live` uses **confirmed stop runs** as its
 denominator. It counts runs whose retained context later produces one confirmed
-restart pulse within the configured context lifetime. It does not bridge gaps
-or halftime, and is not an accuracy or cancellation rate. A new confirmed run
+restart pulse within the configured context lifetime. It bridges only tolerated
+gaps, never halftime, and is not an accuracy or cancellation rate. A new confirmed run
 replaces the preceding context. `confirmed_stop_frames_overwritten_by_live`
-checks simultaneous stop/live flags; this should be zero because still and
-moving conditions are disjoint. Later live evidence does not erase earlier
-stop evidence in E3.
+is a **structural invariant check**, not a measured coverage-loss mechanism.
+It counts simultaneous stop/live flags and must be zero: configuration validation
+requires stationary speed < moving speed, making their conditions disjoint.
+Later live evidence does not erase earlier stop evidence in E3.
 
 `without_control_comparison.changed_stop_frames` should also be zero. E4's
 team evidence only corroborates the live branch; it cannot change E3's stop

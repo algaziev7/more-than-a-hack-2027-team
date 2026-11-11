@@ -1,13 +1,44 @@
 # Almaz — Event tags and stoppages
 
 - Owner: Almaz
-- Status: priors merged via PR #5; aggregate coverage follow-up ready for review
+- Status: priors merged via PR #5; PR #11 review correction verified; ready for E2/E4 re-review
 - Branch: `e3/prior-coverage-diagnostics`
 - Reviewer: Beks and Belek/Isken; Azamat for shared types
 - Files: `possession/dead_ball.py`, its tests, and related docs
-- Last update: 2026-11-10
+- Last update: 2026-11-11
 
 ## Current follow-up: E2's low dead-ball coverage report
+
+### PR #11 review correction (2026-11-11)
+
+- Addressed [Belek's inline review](https://github.com/algaziev7/more-than-a-hack-2027-team/pull/11#discussion_r4536514399)
+  on branch `e3/prior-coverage-diagnostics`, based on `9c1daf4`.
+- The cumulative missing-frame budget now applies only while confirmation is
+  pending and clears on confirmation. Confirmed stops retain the per-gap bound;
+  repeated isolated gaps no longer erase a long stop or its restart context.
+  Missing frames remain neutral; long gaps, rejected observations, displacement
+  checks and half resets retain their existing behavior. Default gap remains 0.
+- Clarified the review nit: `confirmed_stop_frames_overwritten_by_live` is a
+  structural invariant check, required to be zero by disjoint speed gates.
+  No shared contracts or signatures changed; E2/E4 are the affected consumers.
+- Added three synthetic regressions, all reproduced failing before the fix:
+  a long stop with repeated gaps, restart after the former budget reset, and
+  confirmation after exhausting the pending budget. All now pass.
+- Verification with the existing Python 3.15.0 environment:
+  `python -m unittest tests.test_dead_ball`: 53 pass;
+  `python -m unittest discover -s tests`: 147 discovered, 145 pass, two existing
+  decoder skips on this branch; `git diff --check`: pass.
+- Combined verification: archived main `7431a44` into a disposable directory,
+  overlaid this branch's `possession/dead_ball.py` and `tests/test_dead_ball.py`,
+  initialized Git for repository-policy tests, then ran the full suite:
+  **200 pass, no skips**, including the real decoder integration tests.
+  The initial archive-only run failed Git-dependent ignore checks because it
+  lacked `.git`; initializing the disposable repository resolved those failures.
+- No restricted inputs, public labels or real-match jobs used. Python 3.12 and
+  competition accuracy remain unverified in this session. Shared main untouched.
+- Next: E2/E4 re-review PR #11's corrected gap semantics; an authorised teammate
+  performs the documented local comparison before choosing a gap setting.
+
 
 ### Bounded-gap candidate added after the diagnostic increment
 

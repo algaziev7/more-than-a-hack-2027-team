@@ -363,6 +363,38 @@ class MissingGapTests(unittest.TestCase):
         self.missing(match, list(range(1, 30, 2)))
         assert_neutral(build_priors(match, config=self.config))
 
+    def test_confirmed_stop_survives_repeated_isolated_gaps(self):
+        match = match_input(n=120, tagged=True)
+        self.missing(match, list(range(10, 120, 10)))
+        prior = build_priors(match, config=self.config)
+        expected_stop = match.ball_observed & (match.frame >= 5)
+        np.testing.assert_array_equal(prior.dead_evidence > .5, expected_stop)
+        assert_neutral(prior, ~match.ball_observed)
+        report = summarize_prior_diagnostics(match, config=self.config)
+        self.assertEqual(report["frame_counts"]["confirmed_stop_frames"], 104)
+        self.assertEqual(report["event_counts"]["confirmed_stop_runs"], 1)
+
+    def test_restart_survives_repeated_gaps_in_confirmed_stop(self):
+        match = match_input(n=40, tagged=True)
+        self.missing(match, [10, 20, 30])
+        match.ball_xy_m[31:, 0] += np.arange(1, 10) * .3
+        match.ball_speed_mps[31:] = 3.
+        prior = build_priors(match, config=self.config)
+        np.testing.assert_array_equal(
+            np.flatnonzero(prior.diagnostic_flags & CONFIRMED_RESTART), [32])
+        report = summarize_prior_diagnostics(match, config=self.config)
+        self.assertEqual(report["event_counts"]["confirmed_stop_runs"], 1)
+        self.assertEqual(report["event_counts"]["stop_contexts_followed_by_confirmed_live"], 1)
+
+    def test_confirmation_clears_pending_missing_budget(self):
+        match = match_input(n=15, tagged=True)
+        self.missing(match, [3, 4, 8, 9])
+        prior = build_priors(match, config=self.config)
+        # The pending run spends its whole budget, then confirms at frame 7.
+        np.testing.assert_array_equal(
+            np.flatnonzero(prior.dead_evidence > .5), [7, 10, 11, 12, 13, 14])
+        assert_neutral(prior, ~match.ball_observed)
+
     def test_long_gap_resets_pending_and_confirmed_context(self):
         match = motion_after_stop()
         self.missing(match, [6, 7, 8])

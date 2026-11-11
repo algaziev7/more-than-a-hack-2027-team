@@ -218,7 +218,9 @@ def _build_priors(match, features, config, totals=None):
             motion_run = 0  # Live confirmation must remain consecutive.
             if half and not match.ball_observed[frame]:
                 missing_run += 1
-                if stop_run:
+                # Only pending confirmation can bank support across gaps.
+                # Confirmed stops retain the per-gap bound, not a lifetime budget.
+                if 0 < stop_run < stop_frames:
                     stop_missing += 1
                 if (last_usable is not None and missing_run <= gap_frames
                         and stop_missing <= gap_frames):
@@ -261,6 +263,7 @@ def _build_priors(match, features, config, totals=None):
             elif stop_run == stop_frames:
                 totals["confirmed_stop_runs"] += 1
         if stop_run >= stop_frames:
+            stop_missing = 0
             out.dead_evidence[frame] = .9
             out.dead_reliability[frame] = settings.evidence_weight
             if tagged_stop[frame]:
@@ -321,6 +324,8 @@ def summarize_prior_diagnostics(match, features=None, config=None):
         "graded_frame_shares": {name: value / graded if graded else None
                                 for name, value in frame_counts.items()},
         "event_counts": event_counts,
+        # Structural invariant check, not an observed attrition mechanism:
+        # validated stationary/moving thresholds make the two gates disjoint.
         "confirmed_stop_frames_overwritten_by_live": int(np.count_nonzero(
             ((priors.diagnostic_flags & (STOP_TAG_AND_STILL | STOP_OUTSIDE_AND_STILL)) != 0)
             & live)),

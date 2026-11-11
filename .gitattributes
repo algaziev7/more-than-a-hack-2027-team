@@ -1,0 +1,2 @@
+# Keep shell hooks runnable on Windows checkouts (CRLF breaks the shebang).
+*.sh text eol=lf

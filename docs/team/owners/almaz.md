@@ -7,6 +7,19 @@
 - Files: `possession/dead_ball.py`, its tests, and related docs
 - Last update: 2026-11-11
 
+## Integrated candidate handoff (2026-11-11)
+
+- `e2/possession-refinement` integrates this fixed PR #11 with PR #13 and new
+  decoder policies. `configs/possession-v2.json` explicitly enables 0.2 s missing
+  tolerance; E3's default remains zero for existing configurations.
+- Combined suite: 228 pass, no skips, including repeated-gap restart preservation
+  and a full-length invented pipeline/export/manifest. Python 3.15.0; no match
+  assets or public labels used. Shared prior fields/signature unchanged.
+- See the [refinement decision](../decisions/2026-11-11-possession-refinement.md)
+  for live/unknown assignment, boundary limits, evidence and limitations.
+- Next: E2/E3/E4 review the candidate; authorised local runs and independent
+  reproduction remain required. This is branch work, not accepted main behavior.
+
 ## Current follow-up: E2's low dead-ball coverage report
 
 ### PR #11 review correction (2026-11-11)

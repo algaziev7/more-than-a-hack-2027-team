@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "seed": 0,
+  "data": {"load_tags": true, "cache": true},
+  "dead_ball": {"max_missing_gap_s": 0.2},
+  "state_machine": {
+    "offline_refinement": true,
+    "max_backdate_s": 0.6,
+    "restart_lookahead_s": 2.0,
+    "strong_team_dwell_s": 0.32,
+    "strong_team_reliability": 0.75,
+    "strong_team_margin": 0.7
+  }
+}

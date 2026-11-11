@@ -225,6 +225,55 @@ class StateMachineValidationTests(unittest.TestCase):
                         expected = "D" * 40 if offset < 0 else "D" * 14 + team * 26
                         self.assertEqual(result.labels.tolist(), list(expected))
 
+    # Decision 7 (tracking-first fusion): reliable tracking owns the frame; tags fill only frames
+    # where tracking is below the reliability floor. Invented inputs throughout.
+    def _tracking_and_tags(self, n, tracking_home, tracking_rel, tag_home, tag_rel):
+        match, features, priors = evidence_sequence("." * n)
+        features.team_evidence[:] = [tracking_home, 1 - tracking_home]
+        features.team_reliability[:] = tracking_rel
+        priors.tag_team_evidence[:] = [tag_home, 1 - tag_home]
+        priors.tag_team_reliability[:] = tag_rel
+        return match, features, priors
+
+    def test_contested_reliable_tracking_pauses_instead_of_letting_a_tag_vote(self):
+        # A duel (margin 0.04 < 0.15) inside an H tag window: nobody clearly has the ball.
+        result = decode(*self._tracking_and_tags(40, .52, .9, 1., .5))
+        self.assertTrue(np.all(result.labels == "D"), result.labels)
+        self.assertEqual(result.diagnostics["team_sources"],
+                         {"tracking": 0, "contested": 40, "tag": 0})
+
+    def test_decisive_tracking_turnover_is_not_overruled_by_a_stale_tag(self):
+        match, features, priors = self._tracking_and_tags(60, .3, .4, 1., .5)
+        features.team_evidence[:30] = [.9, .1]  # H establishes possession first
+        result = decode(match, features, priors)
+        self.assertEqual(label_transitions(result.labels), [(14, "D", "H"), (44, "H", "A")])
+
+    def test_tag_fills_frames_where_tracking_is_below_the_floor(self):
+        # Zero reliability must carry neutral evidence (contracts rule); .1 is a weak A reading.
+        for tracking_home, tracking_rel in ((.5, 0.), (.1, .1)):
+            with self.subTest(tracking_rel=tracking_rel):
+                result = decode(*self._tracking_and_tags(
+                    30, tracking_home, tracking_rel, 1., .5))
+                self.assertEqual(result.labels.tolist(), list("D" * 14 + "H" * 16))
+                self.assertEqual(result.diagnostics["team_sources"],
+                                 {"tracking": 0, "contested": 0, "tag": 30})
+
+    def test_two_sub_floor_sources_no_longer_add_up_to_a_decision(self):
+        # Averaging summed reliabilities (.2 + .1 >= .25); one source must clear the floor alone.
+        result = decode(*self._tracking_and_tags(30, .9, .2, 1., .1))
+        self.assertTrue(np.all(result.labels == "D"))
+
+    def test_tag_weight_below_decoder_floor_fails(self):
+        # Review note: under Decision 7 a non-zero tag weight below the floor disables tags silently.
+        inputs = evidence_sequence("H")
+        inputs[2].tag_team_evidence[:] = [1., 0.]
+        inputs[2].tag_team_reliability[:] = .2
+        with self.assertRaisesRegex(ValueError, "team_reliability"):
+            decode(*inputs, {"tagging": {"team_reliability": .2}})
+        for ok in (0., .25):
+            with self.subTest(team_reliability=ok):
+                decode(*inputs, {"tagging": {"team_reliability": ok}})
+
     def test_live_play_between_stop_clues_does_not_enter_dead(self):
         # Beks's review: isolated stops split by a restart and live play must not combine.
         result = decode(*evidence_sequence(

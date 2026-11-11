@@ -160,6 +160,71 @@ class StateMachineValidationTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "live_confirmed_threshold"):
                     decode(*evidence_sequence("H"), {"state_machine": settings})
 
+    def test_conflicting_restart_cannot_clear_a_confirmed_stop(self):
+        for team in ("H", "A"):
+            with self.subTest(team=team):
+                match, features, priors = evidence_sequence(team * 30 + "D" * 10 + team * 20)
+                # Both signals meet their default thresholds: adjusted dead=.65,
+                # restart=.6. A dead decision must keep the stop latch set.
+                priors.dead_evidence[30:40] = .95
+                priors.restart_evidence[30:40] = .6
+                result = decode(match, features, priors)
+                self.assertTrue(np.all(result.labels[31:] == "D"))
+                # A later unopposed restart must still release it normally.
+                priors.restart_evidence[40] = .75
+                result = decode(match, features, priors)
+                self.assertEqual(label_transitions(result.labels, start=30),
+                                 [(31, team, "D"), (54, "D", team)])
+
+    def test_stop_fallback_requires_longer_support_than_ordinary_dwell(self):
+        for settings in ({"latched_team_dwell_s": .04},
+                         {"latched_team_dwell_s": .6}, {"team_dwell_s": 4.}):
+            with self.subTest(**settings):
+                with self.assertRaisesRegex(ValueError, "latched_team_dwell_s"):
+                    decode(*evidence_sequence("H"), {"state_machine": settings})
+        # Check rounded counts at the actual match rate, not the 25-fps fallback.
+        config = {"state_machine": {"team_dwell_s": .1, "latched_team_dwell_s": .11}}
+        with self.assertRaisesRegex(ValueError, "latched_team_dwell_s"):
+            decode(*evidence_sequence("H"), config)  # both ceil to 3 at 25 fps
+        result = decode(*evidence_sequence("H" * 20, fps=100.), config)
+        self.assertEqual(result.labels.tolist(), list("D" * 9 + "H" * 11))
+
+    def test_zero_team_floors_do_not_turn_absent_or_tied_evidence_into_home(self):
+        config = {"state_machine": {"team_reliability_min": 0., "team_margin_threshold": 0.}}
+        for weight in (0., .9):
+            with self.subTest(weight=weight):
+                match, features, priors = evidence_sequence("." * 30)
+                features.team_reliability[:] = weight
+                result = decode(match, features, priors, config)
+                self.assertTrue(np.all(result.labels == "D"))
+        # Zero floors must still allow a genuine, positively weighted team clue.
+        result = decode(*evidence_sequence("A" * 30), config)
+        self.assertEqual(result.labels.tolist(), list("D" * 14 + "A" * 16))
+
+    def test_zero_dead_floor_does_not_promote_zero_weight_stop_evidence(self):
+        config = {"state_machine": {"dead_reliability_min": 0., "dead_threshold": .5}}
+        result = decode(*evidence_sequence("H" * 30), config)
+        self.assertEqual(result.labels.tolist(), list("D" * 14 + "H" * 16))
+
+    def test_team_margin_boundary_is_inclusive_and_symmetric(self):
+        for source in ("tracking", "tagging", "both"):
+            for offset in (-1e-9, 0., 1e-9):
+                for team in ("H", "A"):
+                    with self.subTest(source=source, offset=offset, team=team):
+                        match, features, priors = evidence_sequence("." * 40)
+                        pair = [.575 + offset, .425 - offset]
+                        if team == "A":
+                            pair.reverse()
+                        if source in ("tracking", "both"):
+                            features.team_evidence[:] = pair
+                            features.team_reliability[:] = .9
+                        if source in ("tagging", "both"):
+                            priors.tag_team_evidence[:] = pair
+                            priors.tag_team_reliability[:] = .5
+                        result = decode(match, features, priors)
+                        expected = "D" * 40 if offset < 0 else "D" * 14 + team * 26
+                        self.assertEqual(result.labels.tolist(), list(expected))
+
     def test_live_play_between_stop_clues_does_not_enter_dead(self):
         # Beks's review: isolated stops split by a restart and live play must not combine.
         result = decode(*evidence_sequence(

@@ -134,6 +134,8 @@ class StateMachineConfig:
             raise ValueError("state_machine.fps must be positive")
         if min(self.dead_dwell_s, self.team_dwell_s, self.latched_team_dwell_s) <= 0:
             raise ValueError("dwell durations must be positive")
+        if self.latched_team_dwell_s <= self.team_dwell_s:
+            raise ValueError("state_machine.latched_team_dwell_s must exceed team_dwell_s")
         if self.evidence_window_s < max(self.dead_dwell_s, self.team_dwell_s):
             raise ValueError("state_machine.evidence_window_s must be at least every dwell")
         for name in ("dead_threshold", "dead_reliability_min", "restart_weight",
@@ -182,7 +184,7 @@ def _section(config, name, cls):
 
 
 def _combine(evidence_a, reliability_a, evidence_b, reliability_b):
-    """Reliability-weighted average of two [0,1]-scored opinions about the same question.
+    """Fuse two H/A evidence matrices using their per-frame reliability weights.
 
     Neutral (0.5, reliability 0) when both inputs are unreliable, per the "no evidence => [0.5,
     0.5] / reliability 0" convention in docs/team/INTERFACES.md.
@@ -190,8 +192,9 @@ def _combine(evidence_a, reliability_a, evidence_b, reliability_b):
     total = reliability_a + reliability_b
     safe_total = np.where(total > 0, total, 1.0)
     combined_evidence = np.where(
-        total > 0,
-        (evidence_a * reliability_a + evidence_b * reliability_b) / safe_total,
+        total[:, None] > 0,
+        (evidence_a * reliability_a[:, None] + evidence_b * reliability_b[:, None])
+        / safe_total[:, None],
         0.5,
     )
     combined_reliability = np.minimum(1.0, total)
@@ -240,7 +243,8 @@ def _decisive_state_per_frame(features, priors, config: StateMachineConfig):
 
     dead_evidence = np.asarray(priors.dead_evidence, dtype=float)
     restart_evidence = np.asarray(priors.restart_evidence, dtype=float)
-    dead_reliable = np.asarray(priors.dead_reliability, dtype=float) >= config.dead_reliability_min
+    dead_weight = np.asarray(priors.dead_reliability, dtype=float)
+    dead_reliable = (dead_weight > 0) & (dead_weight >= config.dead_reliability_min)
 
     effective_dead = np.clip(dead_evidence - config.restart_weight * restart_evidence, 0.0, 1.0)
     is_dead = dead_reliable & (effective_dead >= config.dead_threshold)
@@ -251,19 +255,28 @@ def _decisive_state_per_frame(features, priors, config: StateMachineConfig):
     # reliable restart clue (a tag window, or E3's CONFIRMED_RESTART pulse). Either is enough.
     live_confirmed = dead_reliable & (dead_evidence <= config.live_confirmed_threshold)
     restart_confirmed = restart_evidence >= config.restart_evidence_threshold
-    exit_dead_ok = live_confirmed | restart_confirmed
+    # A frame still classified as dead after restart weighting cannot also
+    # clear the stop latch. Resolve contradictory clues with dead precedence.
+    exit_dead_ok = (~is_dead) & (live_confirmed | restart_confirmed)
 
     team_evidence, team_reliability = _combine(
-        np.asarray(features.team_evidence, dtype=float)[:, 0],
+        np.asarray(features.team_evidence, dtype=float),
         np.asarray(features.team_reliability, dtype=float),
-        np.asarray(priors.tag_team_evidence, dtype=float)[:, 0],
+        np.asarray(priors.tag_team_evidence, dtype=float),
         np.asarray(priors.tag_team_reliability, dtype=float),
     )
-    margin = np.abs(team_evidence - 0.5) * 2.0  # evidence[H] - evidence[A], rescaled from [0,1]
-    team_reliable = (~is_dead) & (team_reliability >= config.team_reliability_min) \
-        & (margin >= config.team_margin_threshold)
-    candidate[team_reliable & (team_evidence >= 0.5)] = H
-    candidate[team_reliable & (team_evidence < 0.5)] = A
+    # Subtract both columns so swapping teams negates the margin symmetrically.
+    # Allow only floating-point roundoff at an inclusive threshold; ties and
+    # zero-weight clues remain non-decisive even when configured floors are zero.
+    signed_margin = team_evidence[:, 0] - team_evidence[:, 1]
+    margin = np.abs(signed_margin)
+    roundoff = 8 * np.finfo(float).eps
+    team_reliable = ((~is_dead) & (team_reliability > 0)
+                     & (team_reliability >= config.team_reliability_min)
+                     & (margin > roundoff)
+                     & (margin >= config.team_margin_threshold - roundoff))
+    candidate[team_reliable & (signed_margin > 0)] = H
+    candidate[team_reliable & (signed_margin < 0)] = A
     return candidate, is_dead, exit_dead_ok
 
 
@@ -286,6 +299,12 @@ def decode(match, features, priors, config=None) -> Prediction:
         if "fps" in (config or {}).get("state_machine", {}) and settings.fps != match.fps:
             raise ValueError("state_machine.fps must agree with match.fps")
         settings = replace(settings, fps=match.fps)
+    # Distinct durations may still round to the same number of observations.
+    # Check only after resolving match.fps, so low/high-rate inputs use their
+    # actual dwell counts rather than the legacy 25-fps config fallback.
+    if settings.latched_team_dwell_frames <= settings.team_dwell_frames:
+        raise ValueError("state_machine.latched_team_dwell_s must require more frames "
+                         "than team_dwell_s at the match fps")
 
     # Decision 6's restart_evidence_threshold must stay strictly above tagging's bare restart
     # hint, or team evidence could exit a confirmed stop using nothing but a SET PIECES tag

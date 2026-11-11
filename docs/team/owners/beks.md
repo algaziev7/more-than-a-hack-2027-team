@@ -32,13 +32,14 @@ The code uses slot displacement only as a quality check. An isolated position
 outlier can also invalidate the displacement into the following frame.
 
 The H/A clue requires an in-pitch ball and a distance to each team, with a
-unique nearest team closer than 3 m. Home support is the away distance divided
+nearest player closer than 3 m; an exact tie is contested (neutral evidence,
+geometric reliability), not missing. Home support is the away distance divided
 by the sum of both distances, with away support as its complement.
 Reliability is `(1 - nearest / 3 m) * 8 / max(speed, 8 m/s)`: it falls with
 distance to the ball and ball speed above 8 m/s. Closeness of the two team
 distances is not in reliability (E2's `team_margin_threshold` judges it). If a supplied speed is rejected,
 adjacent displacement can still reduce reliability. With neither source
-the distance clue is unchanged. Unavailable or ambiguous evidence is `(0.5, 0.5)` with
+the distance clue is unchanged. Unavailable evidence is `(0.5, 0.5)` with
 reliability zero. These are untuned heuristics. The function accepts the
 pipeline config and v1 uses fixed constants. E2 owns persistence and labels.
 
@@ -159,11 +160,31 @@ Knock-on for E3: `dead_ball` treats `team_reliability >= 0.5` with evidence
 within 1.5 m of a slow ball and margin is at least 0.5, so it passes more
 often. Almaz must review before merge.
 
+## PR #14 review fixes and four-run comparison (2026-11-11)
+
+Almaz's two P2 findings on PR #14 are fixed. Exact distance ties no longer
+force reliability to zero: they keep geometric reliability with neutral
+evidence, so with PR #13 a tie pauses like a near tie instead of letting a
+phase tag decide (`test_exact_tie_reaches_the_decoder_like_a_near_tie`,
+which fails on the old gate). `scripts/reliability_breakdown.py` now takes
+its cutoff and margin from the config's `state_machine` section, with
+`--cutoff` as an override (`ReliabilityBreakdownCliTests`). 183 tests passed
+on this branch, and 188 with PR #13 merged in, on Windows Python 3.12.
+
+Beks ran the four variants locally (counts kept local). Qualitatively,
+coverage barely changes; both PRs add possessions, PR #13 more than this
+one, and combined many of the extra ones are very short. That looks like
+duel flicker but is not confirmed. Belek pointed out that raising the dwell
+and checking that short spells drop cannot fail, and delays every turnover.
+Agreed plan: merge PR #14 now (it fixes the double count independently);
+Belek adds a bounce-back count to his smoke script (short spells sandwiched
+between spells of the other team, with their margins); if they are flicker,
+he adds backdating to PR #13 so a longer dwell decides whether a turnover
+happened without delaying its boundary; then one rerun of both and decide.
+
 ## Next exact action
 
-Open the E4 PR for this branch, notifying Belek (E2) and Almaz (E3). Then
-Beks and Belek run four local smoke runs (current main, E4 only, PR #13
-only, both) and compare coverage and spell counts locally, keeping the
-numbers local. Merge neither PR until that comparison is done. Beks also
-reviews Almaz's PR #11, which waits on E4 review. After E1 produces the
+After Almaz confirms the fixes, merge PR #14. Then review Almaz's PR #11.
+Rerun the four-variant comparison once Belek's bounce-back count and any
+backdating land in PR #13, keeping numbers local. After E1 produces the
 final CSV, Beks runs `scripts/check_solution.py` on that exact file.

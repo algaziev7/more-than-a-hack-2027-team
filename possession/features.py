@@ -75,9 +75,10 @@ def build_features(match, config=None) -> FeatureData:
     away, away_second, away_count = _team_distances(distances[:, match.slot_team == "A"])
 
     closest = np.minimum(home, away)
-    supported = (boundary >= 0) & (closest < CONTROL_RADIUS_M) & (home != away)
+    # Ties stay supported: neutral evidence with geometric reliability means "contested", not "no data".
+    supported = (boundary >= 0) & (closest < CONTROL_RADIUS_M)
     home_support = np.full(len(match.frame), .5)
-    np.divide(away, home + away, out=home_support, where=supported)
+    np.divide(away, home + away, out=home_support, where=supported & (home + away > 0))
     proximity = np.where(supported, 1 - closest / CONTROL_RADIUS_M, 0)
     # A rejected raw speed must not erase observed fast movement from the team clue.
     clue_speed = np.where(speed_usable, speed, displacement)

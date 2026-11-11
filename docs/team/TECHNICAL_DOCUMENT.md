@@ -43,7 +43,7 @@ Each feature has a validity mask. Implausible ball/slot jumps are rejected and
 speed disagreement reduces usability. Track-slot displacement checks quality;
 it does not identify a player through time. Unknown geometry stays neutral.
 
-An in-pitch ball within 3 m of a unique nearest team provides an H/A distance
+An in-pitch ball within 3 m of a player from either team provides an H/A distance
 clue. Reliability falls with distance and fast ball motion; whether opposing
 distances are too similar is left to E2's margin check, so it is not counted twice. Cutoffs are untuned engineering heuristics, not fitted probabilities.
 E4 does not smooth possessions. Exact units and reliability rules are in

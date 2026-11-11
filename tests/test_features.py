@@ -1,11 +1,16 @@
+from contextlib import redirect_stdout
 from dataclasses import replace
+import io
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
 from possession.contracts import MatchData
 from possession.dead_ball import build_priors
 from possession.features import build_features, reliability_breakdown
+from possession.state_machine import decode
+import scripts.reliability_breakdown as cli
 from tests.fixtures import synthetic_match
 
 
@@ -40,7 +45,7 @@ class TrackingFeatureTests(unittest.TestCase):
         self.assertGreater(out.team_evidence[0, 0], .75)
         self.assertGreater(out.team_reliability[0], .5)
 
-    def test_missing_players_and_ambiguous_control_are_neutral(self):
+    def test_missing_players_are_neutral_and_ties_are_contested(self):
         nan = np.nan
         match = tracking([[10, 20], [10, 20]],
                          [[[10, 20], [nan, nan], [12, 20]],
@@ -49,7 +54,8 @@ class TrackingFeatureTests(unittest.TestCase):
         self.assertFalse(out.validity["away_nearby_count"][0])
         self.assertFalse(out.validity["home_distance_advantage_m"][0])
         np.testing.assert_array_equal(out.team_evidence, .5)
-        np.testing.assert_array_equal(out.team_reliability, 0)
+        # Both teams at the ball: no preference, but the geometry is fully usable.
+        np.testing.assert_array_equal(out.team_reliability, [0, 1])
 
     def test_missing_ball_duration_and_speed_reset_at_half_boundaries(self):
         nan = np.nan
@@ -176,3 +182,38 @@ class TrackingFeatureTests(unittest.TestCase):
         np.testing.assert_allclose(out.team_reliability, [5 / 6, .2, 2 / 3, 5 / 24, 0, 2 / 3])
         self.assertEqual(reliability_breakdown(out), {
             "tracking_frames": 5, "below_cutoff": 2, "far": 1, "fast": 1, "contested": 1})
+
+    def test_exact_tie_reaches_the_decoder_like_a_near_tie(self):
+        # Almaz's PR #14 review: an exact tie must not read as "no tracking", letting a tag decide.
+        def labels(away_y):
+            match = tracking([[10, 20]] * 60, [[[11, 20], [10, away_y], [50, 50]]] * 60)
+            features = build_features(match)
+            priors = build_priors(match, features=features)
+            tagged = replace(priors, tag_team_evidence=np.tile([1., 0.], (60, 1)),
+                             tag_team_reliability=np.full(60, .5))
+            return features.team_reliability, decode(match, features, tagged).labels
+
+        exact_reliability, exact = labels(21.0)
+        near_reliability, near = labels(21.001)
+        np.testing.assert_allclose(exact_reliability, 2 / 3)
+        np.testing.assert_allclose(near_reliability, 2 / 3)
+        np.testing.assert_array_equal(exact, near)
+
+
+class ReliabilityBreakdownCliTests(unittest.TestCase):
+    def run_cli(self, state_machine, *argv):
+        match = tracking([[10, 20]] * 60, [[[11, 20], [12, 20], [50, 50]]] * 60)
+        config = {"state_machine": state_machine}
+        with patch.object(cli, "load_config", return_value=config), \
+                patch.object(cli, "load_match", return_value=match), \
+                redirect_stdout(io.StringIO()) as out:
+            cli.main(["--config", "invented.json", *argv])
+        return {line.split(":")[0].strip(): int(line.split(":")[1].split()[0])
+                for line in out.getvalue().splitlines()}
+
+    def test_cli_uses_the_configured_decoder_thresholds(self):
+        # 1 m vs 2 m, slow ball: reliability 2/3, margin 1/3.
+        self.assertEqual(self.run_cli({"team_reliability_min": .75})["below_cutoff"], 60)
+        self.assertEqual(self.run_cli({"team_margin_threshold": .4})["contested"], 60)
+        self.assertEqual(self.run_cli({"team_reliability_min": .75}, "--cutoff", ".5")
+                         ["below_cutoff"], 0)

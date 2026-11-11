@@ -75,14 +75,16 @@ def build_features(match, config=None) -> FeatureData:
     away, away_second, away_count = _team_distances(distances[:, match.slot_team == "A"])
 
     closest = np.minimum(home, away)
-    supported = (boundary >= 0) & (closest < CONTROL_RADIUS_M) & (home != away)
+    # Ties stay supported: neutral evidence with geometric reliability means "contested", not "no data".
+    supported = (boundary >= 0) & (closest < CONTROL_RADIUS_M)
     home_support = np.full(len(match.frame), .5)
-    np.divide(away, home + away, out=home_support, where=supported)
+    np.divide(away, home + away, out=home_support, where=supported & (home + away > 0))
     proximity = np.where(supported, 1 - closest / CONTROL_RADIUS_M, 0)
     # A rejected raw speed must not erase observed fast movement from the team clue.
     clue_speed = np.where(speed_usable, speed, displacement)
     speed_weight = FAST_BALL_MPS / np.fmax(clue_speed, FAST_BALL_MPS)
-    reliability = proximity * np.abs(2 * home_support - 1) * speed_weight
+    # Margin is left to the decoder's team_margin_threshold; multiplying it in here counted it twice.
+    reliability = proximity * speed_weight
 
     features = {
         "home_nearest_m": home,
@@ -101,3 +103,25 @@ def build_features(match, config=None) -> FeatureData:
         match.frame.copy(), features, {name: np.isfinite(value) for name, value in features.items()},
         np.column_stack((home_support, 1 - home_support)), reliability,
     )
+
+
+def reliability_breakdown(features: FeatureData, cutoff: float = 0.25,
+                          margin_min: float = 0.15) -> dict:
+    """Aggregate counts of why frames with tracking evidence give no team clue.
+
+    Below `cutoff`, reliability = proximity * speed is "far" (nearest player
+    beyond CONTROL_RADIUS_M * (1 - cutoff)) or else "fast" (ball above
+    FAST_BALL_MPS). "contested" counts frames at or above the cutoff whose
+    margin is under the decoder's `margin_min`. Counts only.
+    """
+    reliability = features.team_reliability
+    margin = np.abs(features.team_evidence[:, 0] - features.team_evidence[:, 1])
+    with np.errstate(invalid="ignore"):
+        proximity = 1 - np.fmin(features.features["home_nearest_m"],
+                                features.features["away_nearest_m"]) / CONTROL_RADIUS_M
+    evidence = reliability > 0
+    low = evidence & (reliability < cutoff)
+    far = low & (proximity < cutoff)
+    return {"tracking_frames": int(evidence.sum()), "below_cutoff": int(low.sum()),
+            "far": int(far.sum()), "fast": int((low & ~far).sum()),
+            "contested": int((evidence & ~low & (margin < margin_min)).sum())}

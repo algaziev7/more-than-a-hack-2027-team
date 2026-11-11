@@ -31,6 +31,13 @@ module, command, experiment, or result already exists. Check the code and Git st
   `possession/`, `scripts/`, and `tests/` as described in the plan.
 - Keep data, caches, model outputs, and local paths out of committed context.
   Use `data/`, `artifacts/`, `runs/`, or `.local/` for local material.
+- In Claude Code, when a change is finished and ready to commit, run the
+  `pre-commit-reviewer` subagent (`.claude/agents/`) on it first, and fix or
+  report its blocking findings. Other agents: do an equivalent review using
+  that file's checklist. A Claude Code hook (`.claude/hooks/require-review.sh`,
+  needs `jq` and a POSIX shell such as Git Bash) refuses an unreviewed
+  `git commit` until it is rerun with `CLAUDE_REVIEWED=1`. That marker is an
+  honour system, not a lock.
 - At each handoff, update the owner's file with the actual branch, completed
   work, tests and their results, blockers, decisions, and exact next step.
   Distinguish measured results from hypotheses and untested code.

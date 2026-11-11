@@ -49,6 +49,10 @@ docs/team/decisions/2026-10-23-e2-data-evidence-and-state-machine-design.md. Sum
   just theorized): sustained team evidence can still exit a latched `D`, but only after
   `latched_team_dwell_s` -- several times longer than an ordinary team change needs -- precisely
   because that length is what makes it categorically different from brief proximity.
+- Decision 7: tracking and Smart Tagging team evidence are never averaged. Tracking whose
+  reliability clears `team_reliability_min` decides the frame alone: decisive tracking votes,
+  contested tracking (a duel) gives no candidate. Tags fill only frames where tracking is below
+  that floor. `diagnostics["team_sources"]` counts graded frames decided each way.
 
 `config` follows the same convention as `dead_ball.DeadBallConfig` / `tagging.TaggingConfig`: the
 caller passes the *whole* shared pipeline dict, and this module reads only its own
@@ -91,9 +95,10 @@ class StateMachineConfig:
     dead_reliability_min: float = 0.3  # below this, dead_evidence is treated as not informative
     restart_weight: float = 0.5        # restart_evidence counts against calling a frame dead
 
-    # Team decision (H vs A), after fusing features.team_evidence and priors.tag_team_evidence.
+    # Team decision (H vs A). Decision 7: each frame is decided by one source -- tracking if its
+    # reliability clears the floor, otherwise the tag -- never an average of the two.
     team_margin_threshold: float = 0.15   # required |evidence[H] - evidence[A]| to be decisive
-    team_reliability_min: float = 0.25    # combined reliability floor to trust that margin
+    team_reliability_min: float = 0.25    # a source's own reliability floor to trust that margin
 
     # Decision 6: once dead_confirmed is latched (a real stop was seen), team evidence alone
     # cannot exit D. One of these must also hold, on some frame since the stop was confirmed:
@@ -184,22 +189,21 @@ def _section(config, name, cls):
     return cls(**options)
 
 
-def _combine(evidence_a, reliability_a, evidence_b, reliability_b):
-    """Fuse two H/A evidence matrices using their per-frame reliability weights.
+def _team_call(evidence, reliability, config):
+    """For one H/A source: (reliable, decisive, signed margin H - A) per frame.
 
-    Neutral (0.5, reliability 0) when both inputs are unreliable, per the "no evidence => [0.5,
-    0.5] / reliability 0" convention in docs/team/INTERFACES.md.
+    Subtract both columns so swapping teams negates the margin symmetrically. Allow only
+    floating-point roundoff at an inclusive threshold; ties and zero-weight clues stay
+    non-decisive even when configured floors are zero.
     """
-    total = reliability_a + reliability_b
-    safe_total = np.where(total > 0, total, 1.0)
-    combined_evidence = np.where(
-        total[:, None] > 0,
-        (evidence_a * reliability_a[:, None] + evidence_b * reliability_b[:, None])
-        / safe_total[:, None],
-        0.5,
-    )
-    combined_reliability = np.minimum(1.0, total)
-    return combined_evidence, combined_reliability
+    evidence = np.asarray(evidence, dtype=float)
+    reliability = np.asarray(reliability, dtype=float)
+    signed_margin = evidence[:, 0] - evidence[:, 1]
+    margin = np.abs(signed_margin)
+    roundoff = 8 * np.finfo(float).eps
+    reliable = (reliability > 0) & (reliability >= config.team_reliability_min)
+    decisive = reliable & (margin > roundoff) & (margin >= config.team_margin_threshold - roundoff)
+    return reliable, decisive, signed_margin
 
 
 def _validate_alignment(match, features, priors, half):
@@ -234,7 +238,8 @@ def _validate_alignment(match, features, priors, half):
 def _decisive_state_per_frame(features, priors, config: StateMachineConfig):
     """One candidate per frame (H, A, D, or None), plus two per-frame booleans Decision 6 needs:
     `is_dead` (this frame alone looks confidently dead) and `exit_dead_ok` (this frame alone is
-    positive proof play has resumed -- not merely the absence of a dead signal).
+    positive proof play has resumed -- not merely the absence of a dead signal) -- and the masks
+    of which team source decided each live frame, for diagnostics.
 
     Dead/alive is checked before team identity: a confidently dead frame has no team to assign,
     and a stale team_evidence reading during a stoppage should not outvote a reliable dead signal.
@@ -260,25 +265,23 @@ def _decisive_state_per_frame(features, priors, config: StateMachineConfig):
     # clear the stop latch. Resolve contradictory clues with dead precedence.
     exit_dead_ok = (~is_dead) & (live_confirmed | restart_confirmed)
 
-    team_evidence, team_reliability = _combine(
-        np.asarray(features.team_evidence, dtype=float),
-        np.asarray(features.team_reliability, dtype=float),
-        np.asarray(priors.tag_team_evidence, dtype=float),
-        np.asarray(priors.tag_team_reliability, dtype=float),
-    )
-    # Subtract both columns so swapping teams negates the margin symmetrically.
-    # Allow only floating-point roundoff at an inclusive threshold; ties and
-    # zero-weight clues remain non-decisive even when configured floors are zero.
-    signed_margin = team_evidence[:, 0] - team_evidence[:, 1]
-    margin = np.abs(signed_margin)
-    roundoff = 8 * np.finfo(float).eps
-    team_reliable = ((~is_dead) & (team_reliability > 0)
-                     & (team_reliability >= config.team_reliability_min)
-                     & (margin > roundoff)
-                     & (margin >= config.team_margin_threshold - roundoff))
-    candidate[team_reliable & (signed_margin > 0)] = H
-    candidate[team_reliable & (signed_margin < 0)] = A
-    return candidate, is_dead, exit_dead_ok
+    # Decision 7: tracking-first fusion. Reliable tracking owns the frame: decisive tracking
+    # votes, contested tracking (a duel) gives no candidate, so a pending count pauses. Phase-level
+    # tags span whole attacking windows and usually name the incumbent, so letting them fill a duel
+    # -- or averaging them in -- cancels real turnovers. Tags fill only sub-floor tracking frames.
+    track_reliable, track_decisive, track_margin = _team_call(
+        features.team_evidence, features.team_reliability, config)
+    _, tag_decisive, tag_margin = _team_call(
+        priors.tag_team_evidence, priors.tag_team_reliability, config)
+    use_tag = ~track_reliable & tag_decisive
+    signed_margin = np.where(track_reliable, track_margin, tag_margin)
+    team_decided = (~is_dead) & (track_decisive | use_tag)
+    candidate[team_decided & (signed_margin > 0)] = H
+    candidate[team_decided & (signed_margin < 0)] = A
+    sources = {"tracking": (~is_dead) & track_decisive,
+               "contested": (~is_dead) & track_reliable & ~track_decisive,
+               "tag": (~is_dead) & use_tag}
+    return candidate, is_dead, exit_dead_ok, sources
 
 
 def decode(match, features, priors, config=None) -> Prediction:
@@ -335,7 +338,8 @@ def decode(match, features, priors, config=None) -> Prediction:
     _validate_alignment(match, features, priors, half)
     n = len(half)
 
-    candidate, is_dead, exit_dead_ok = _decisive_state_per_frame(features, priors, settings)
+    candidate, is_dead, exit_dead_ok, sources = _decisive_state_per_frame(
+        features, priors, settings)
 
     labels = np.full(n, X, dtype=object)
     transitions = []
@@ -455,4 +459,7 @@ def decode(match, features, priors, config=None) -> Prediction:
 
         labels[i] = current_state
 
-    return Prediction(labels=labels, diagnostics={"transitions": transitions})
+    graded = half > 0
+    team_sources = {name: int(np.count_nonzero(mask & graded)) for name, mask in sources.items()}
+    return Prediction(labels=labels, diagnostics={"transitions": transitions,
+                                                  "team_sources": team_sources})

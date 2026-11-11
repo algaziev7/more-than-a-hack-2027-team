@@ -346,6 +346,42 @@ cleared the latch on the same frame, and proximity alone exited a confirmed stop
 Still open (policy, not a bug): confirmed live play with no reliable team stays `D`, which
 conflicts with `D` meaning stopped play. Needs a team decision.
 
+## Decision 7 — tracking-first fusion: tags fill gaps, they are never averaged in (2026-11-11)
+
+The first real-features run (aggregate coverage counts only, run locally) suggested Smart Tagging
+was overruling tracking. Tag team evidence is full certainty for one team at a flat 0.5
+reliability across whole attacking-phase windows, on about half of graded frames. Under the old
+reliability-weighted average, tracking at 0.4 reliability saying `A` inside an `H` tag window
+fused to a decisive `H`. A frame supporting the current state resets a pending turnover, so a
+real turnover inside a stale phase window was actively cancelled. That fits the too-long
+possessions in the same run. It is a mechanism that fits the counts, not a measured cause.
+
+At the same time Beks (E4) found his reliability multiplied in the H/A margin that this decoder
+also thresholds, counting it twice. He proposes dropping it from reliability (his branch
+`e4/reliability-v1`). That makes contested tracking high-reliability with evidence near 0.5,
+which in an average would also dilute tags exactly where they should help.
+
+**Rule:** one source decides each frame.
+
+| Tracking on this frame | Frame's team candidate |
+|---|---|
+| reliability >= `team_reliability_min`, margin decisive | tracking's team |
+| reliability >= floor, margin not decisive (contested) | none: a pending count pauses |
+| reliability below floor | the tag's team, if the tag clears the same floor and margin |
+
+Why contested tracking pauses rather than letting the tag fill: a duel is real information that
+nobody clearly has the ball, and phase tags almost always name the incumbent, so filling it
+would cancel turnovers as they start. Pausing keeps a turnover's accumulated support (Decision 3).
+
+Side effect: two sub-floor sources (e.g. 0.2 + 0.1) no longer add up to a decision, since one
+source must clear the floor on its own. With Beks's current formula contested frames are mostly
+below the floor, so tags still fill them until his change lands; the full effect needs both.
+
+Not done yet, measure first: tag-only frames can still reset a tracking-based pending turnover
+during an occlusion. If the comparison run shows that, restrict tag-only frames to supporting,
+never resetting. Selection between variants uses synthetic cases and coverage counts, not labels
+or the public window.
+
 ## Explicitly deferred (not forgotten, not yet needed)
 
 - No vectorization of the per-frame loop — 199k frames is cheap in plain Python; confirmed at

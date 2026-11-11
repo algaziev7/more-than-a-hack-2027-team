@@ -1,12 +1,12 @@
 # Belek and Isken — Possession state machine
 
 - Owner: Belek and Isken
-- Status: Belek's decoder in PR #6; Isken's corrective follow-up awaits review
-- Branch: Belek on `e2/state-v1`; Isken on `e2/decoder-edge-fixes`
+- Status: decoder merged to `main` (PR #6, with Isken's PR #12); Belek on tracking-first fusion
+- Branch: Belek on `e2/tracking-first-fusion`; `e2/state-v1` and `e2/decoder-edge-fixes` are merged
 - Reviewer: E4
 - Owned files: possession/state_machine.py; state-machine configuration and tests
 - Current milestone: synthetic decoder validation and E3/export integration
-- Last update: 2026-11-10 (Isken's track)
+- Last update: 2026-11-11 (Belek's track)
 
 ## Pair coordination
 
@@ -98,7 +98,25 @@ When E4 features exist, connect them to the synthetic integration slice.
   E4 feature builder, and E5 pipeline integration. Hidden-match improvement is
   not measured; the public answer window was not used.
 
-## Belek's track (`e2/state-v1`)
+## Belek's current task: tracking-first fusion (`e2/tracking-first-fusion`)
+
+Decision 7 in the decision doc. Tracking and tag team evidence are no longer averaged: reliable
+tracking decides the frame alone (contested tracking gives no candidate), and tags fill only
+frames where tracking is below `team_reliability_min`. `_combine` is removed. `decode()` now also
+returns `diagnostics["team_sources"]`, graded-frame counts decided by tracking, by tags, or left
+contested. Paired with Beks's option (c) on `e4/reliability-v1` (reliability without the margin
+factor), agreed by message.
+
+- Tests: four new synthetic tests (contested tracking pauses; decisive tracking turnover beats a
+  stale tag; tags fill sub-floor frames; two sub-floor sources no longer combine). They failed
+  on the averaging code first. 184/184 pass on Python 3.12.16 with `requirements-team.lock`.
+- Unmeasured: effect on the real match. Next: run the local four-way comparison (current, Beks's
+  (c) only, this branch only, both) with aggregate counts only, then decide whether tag-only
+  frames should also stop resetting a tracking-based pending turnover.
+- E3 impact: unaffected directly; Beks's (c) changes E3's control check (reliability >= 0.5),
+  so Almaz should review that PR.
+
+## Belek's track (`e2/state-v1`, merged)
 
 ### Completed and verified
 

@@ -170,7 +170,8 @@ class DecoderIntegrationTests(unittest.TestCase):
         with patch("possession.pipeline.load_match", return_value=match):
             prediction = predict_match()
         self.assertEqual(prediction.labels[n // 2 - 1], "H")
-        self.assertEqual(prediction.labels[n // 2], "D")
+        # Decision 8 (E2): the second half earns A from its first frame, nothing carried over.
+        self.assertEqual(prediction.labels[n // 2], "A")
         self.assertEqual(prediction.labels[-2], "A")
         with tempfile.TemporaryDirectory() as directory:
             output = write_submission(prediction, Path(directory) / "invented.csv")
@@ -178,19 +179,22 @@ class DecoderIntegrationTests(unittest.TestCase):
 
     def test_real_pipeline_team_swap_half_reset_and_repeatable_export(self):
         from possession.contracts import MatchData
-        n = 100
+        n = 110
         players = np.tile(np.array([[[10., 20.], [60., 20.]]]), (n, 1, 1))
         ball = np.tile(np.array([[10.1, 20.]]), (n, 1))
-        ball[30:50] = [60.1, 20.]
-        half = np.r_[np.ones(50), np.zeros(5), np.full(45, 2)].astype(np.int8)
+        # 30 frames each side: past E2's 25-frame team dwell (Decision 8). E4 rejects the frame
+        # where the ball jumps 50 m (30), so A's support starts at 31.
+        ball[30:60] = [60.1, 20.]
+        half = np.r_[np.ones(60), np.zeros(5), np.full(45, 2)].astype(np.int8)
         match = MatchData(np.arange(n, dtype=np.int64), half, 25., (105.3, 68.),
                           ball, np.ones(n, bool), players, np.ones((n, 2), bool),
                           np.array(["H", "A"]))
         with patch("possession.pipeline.load_match", return_value=match):
             first, second = predict_match(), predict_match()
-        self.assertEqual(first.labels[25], "H")
-        self.assertEqual(first.labels[49], "A")
-        self.assertEqual(first.labels[55], "D")
+        self.assertEqual(first.labels[30], "H")
+        self.assertEqual(first.labels[31], "A")  # backdated to the first supported A frame
+        self.assertEqual(first.labels[59], "A")
+        self.assertEqual(first.labels[65], "H")  # second half earns H from its own first frame
         self.assertEqual(first.labels[-1], "H")
         swapped = copy.deepcopy(match)
         swapped.slot_team = np.array(["A", "H"])

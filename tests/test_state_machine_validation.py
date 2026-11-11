@@ -21,7 +21,8 @@ from possession.state_machine import decode
 from tests.e2_scenarios import TIMING_CASES, evidence_sequence, label_transitions, measure_timing
 
 
-def grouped_reference(symbols, half, team_required, dead_required, latched_required=None):
+def grouped_reference(symbols, half, team_required, dead_required, latched_required=None,
+                      lookahead=0):
     """Independent re-derivation of the decode() policy from its prose description.
 
     Through 2026-11-08 this was a purely declarative "group runs, check each run's own length,
@@ -52,6 +53,14 @@ def grouped_reference(symbols, half, team_required, dead_required, latched_requi
     R also discards a pending D-candidate (2026-11-10, Almaz's review): confirmed live play
     between two isolated stop observations means they are not one stop. The evidence-age window
     (evidence_window_s, ~150 frames by default) is not modelled: every sequence here is shorter.
+
+    Decision 8 (2026-11-11): a confirmed team change is backdated to the start of its latest
+    support run (a gap longer than team_required breaks it), except the latched safety valve; D
+    is never backdated.
+
+    Decision 9 (2026-11-11, ported from PR #16): the first team change after an R while in D is
+    moved back to that R when its run starts within `lookahead` symbols and no other team symbol
+    came in between; a D symbol, a half change or leaving D clears it. 0 disables it.
     """
     if latched_required is None:
         latched_required = team_required
@@ -61,7 +70,8 @@ def grouped_reference(symbols, half, team_required, dead_required, latched_requi
         if half_id == 0:
             continue
         state, dead_confirmed = "D", False
-        pending_symbol, pending_count = None, 0
+        pending_symbol, pending_count, last_support = None, 0, None
+        restart_at, restart_teams = None, set()
         for i in indices:
             symbol = symbols[i]
             if symbol == "D":
@@ -76,6 +86,12 @@ def grouped_reference(symbols, half, team_required, dead_required, latched_requi
                     pending_symbol, pending_count = None, 0
             if symbol == "R" and pending_symbol == "D":
                 pending_symbol, pending_count = None, 0
+            if symbol == "D":
+                restart_at = None
+            elif symbol == "R" and state == "D" and restart_at is None:
+                restart_at, restart_teams = i, set()
+            elif symbol in "HA" and restart_at is not None:
+                restart_teams.add(symbol)
 
             candidate = symbol if symbol in "HAD" else None
             if candidate is None:
@@ -85,18 +101,34 @@ def grouped_reference(symbols, half, team_required, dead_required, latched_requi
                 pending_symbol, pending_count = None, 0
                 labels[i] = state
                 continue
-            pending_count = pending_count + 1 if candidate == pending_symbol else 1
+            if candidate == pending_symbol:
+                pending_count += 1
+                if i - last_support > team_required:  # a long unsupported gap breaks the run
+                    pending_start = i
+            else:
+                pending_count, pending_start = 1, i
+            last_support = i
             pending_symbol = candidate
+            latched = candidate != "D" and state == "D" and dead_confirmed
+            backdate = candidate != "D" and not latched
             if candidate == "D":
                 required = dead_required
-            elif state == "D" and dead_confirmed:
+            elif latched:
                 required = latched_required
             else:
                 required = team_required
             if pending_count >= required:
+                # Decision 8: backdate a team change to the run's first supporting symbol (never
+                # D, never the latched safety valve). Only paused symbols lie between.
+                if backdate:
+                    if (restart_at is not None and 0 < pending_start - restart_at <= lookahead
+                            and restart_teams <= {candidate}):
+                        pending_start = restart_at
+                    labels[pending_start:i] = [candidate] * (i - pending_start)
                 if state == "D" and candidate != "D":
                     # Leaving D: don't carry a stale latch into the live period that follows.
                     dead_confirmed = False
+                    restart_at = None
                 state = candidate
                 pending_symbol, pending_count = None, 0
             labels[i] = state
@@ -105,16 +137,20 @@ def grouped_reference(symbols, half, team_required, dead_required, latched_requi
 
 class StateMachineValidationTests(unittest.TestCase):
     def test_default_dwell_uses_match_fps(self):
-        for fps, first_home in ((10., 5), (25., 14), (50., 29)):
+        # 1.0 s confirms on the 10th / 25th / 50th observation; Decision 8 backdates to frame 0.
+        for fps, confirmed in ((10., 9), (25., 24), (50., 49)):
             with self.subTest(fps=fps):
                 prediction = decode(*evidence_sequence("H" * 60, fps=fps))
-                self.assertEqual(np.flatnonzero(prediction.labels == "H")[0], first_home)
+                (event,) = prediction.diagnostics["transitions"]
+                self.assertEqual((event["frame"], event["confirmed_frame"]), (0, confirmed))
+                self.assertTrue(np.all(prediction.labels == "H"))
 
     def test_fractional_dwell_never_rounds_below_required_observations(self):
         # 0.1 s at 25 fps requires 3 observations, not Python round(2.5) == 2.
         config = {"state_machine": {"team_dwell_s": .1, "dead_dwell_s": .1}}
         result = decode(*evidence_sequence("H" * 5 + "D" * 5), config)
-        self.assertEqual(result.labels.tolist(), list("DDHHHHHDDD"))
+        self.assertEqual([t["confirmed_frame"] for t in result.diagnostics["transitions"]], [2, 7])
+        self.assertEqual(result.labels.tolist(), list("HHHHHHHDDD"))  # H backdated, D not
 
     def test_explicit_fps_must_agree_with_match(self):
         inputs = evidence_sequence("H" * 60, fps=50.)
@@ -163,7 +199,7 @@ class StateMachineValidationTests(unittest.TestCase):
     def test_conflicting_restart_cannot_clear_a_confirmed_stop(self):
         for team in ("H", "A"):
             with self.subTest(team=team):
-                match, features, priors = evidence_sequence(team * 30 + "D" * 10 + team * 20)
+                match, features, priors = evidence_sequence(team * 30 + "D" * 10 + team * 30)
                 # Both signals meet their default thresholds: adjusted dead=.65,
                 # restart=.6. A dead decision must keep the stop latch set.
                 priors.dead_evidence[30:40] = .95
@@ -174,7 +210,7 @@ class StateMachineValidationTests(unittest.TestCase):
                 priors.restart_evidence[40] = .75
                 result = decode(match, features, priors)
                 self.assertEqual(label_transitions(result.labels, start=30),
-                                 [(31, team, "D"), (54, "D", team)])
+                                 [(31, team, "D"), (40, "D", team)])
 
     def test_stop_fallback_requires_longer_support_than_ordinary_dwell(self):
         for settings in ({"latched_team_dwell_s": .04},
@@ -187,7 +223,8 @@ class StateMachineValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "latched_team_dwell_s"):
             decode(*evidence_sequence("H"), config)  # both ceil to 3 at 25 fps
         result = decode(*evidence_sequence("H" * 20, fps=100.), config)
-        self.assertEqual(result.labels.tolist(), list("D" * 9 + "H" * 11))
+        self.assertEqual(result.diagnostics["transitions"][0]["confirmed_frame"], 9)  # 10th obs
+        self.assertEqual(result.labels.tolist(), list("H" * 20))  # backdated (Decision 8)
 
     def test_zero_team_floors_do_not_turn_absent_or_tied_evidence_into_home(self):
         config = {"state_machine": {"team_reliability_min": 0., "team_margin_threshold": 0.}}
@@ -199,12 +236,12 @@ class StateMachineValidationTests(unittest.TestCase):
                 self.assertTrue(np.all(result.labels == "D"))
         # Zero floors must still allow a genuine, positively weighted team clue.
         result = decode(*evidence_sequence("A" * 30), config)
-        self.assertEqual(result.labels.tolist(), list("D" * 14 + "A" * 16))
+        self.assertEqual(result.labels.tolist(), list("A" * 30))
 
     def test_zero_dead_floor_does_not_promote_zero_weight_stop_evidence(self):
         config = {"state_machine": {"dead_reliability_min": 0., "dead_threshold": .5}}
         result = decode(*evidence_sequence("H" * 30), config)
-        self.assertEqual(result.labels.tolist(), list("D" * 14 + "H" * 16))
+        self.assertEqual(result.labels.tolist(), list("H" * 30))
 
     def test_team_margin_boundary_is_inclusive_and_symmetric(self):
         for source in ("tracking", "tagging", "both"):
@@ -222,8 +259,152 @@ class StateMachineValidationTests(unittest.TestCase):
                             priors.tag_team_evidence[:] = pair
                             priors.tag_team_reliability[:] = .5
                         result = decode(match, features, priors)
-                        expected = "D" * 40 if offset < 0 else "D" * 14 + team * 26
+                        expected = "D" * 40 if offset < 0 else team * 40
                         self.assertEqual(result.labels.tolist(), list(expected))
+
+    # Decision 7 (tracking-first fusion): reliable tracking owns the frame; tags fill only frames
+    # where tracking is below the reliability floor. Invented inputs throughout.
+    def _tracking_and_tags(self, n, tracking_home, tracking_rel, tag_home, tag_rel):
+        match, features, priors = evidence_sequence("." * n)
+        features.team_evidence[:] = [tracking_home, 1 - tracking_home]
+        features.team_reliability[:] = tracking_rel
+        priors.tag_team_evidence[:] = [tag_home, 1 - tag_home]
+        priors.tag_team_reliability[:] = tag_rel
+        return match, features, priors
+
+    def test_contested_reliable_tracking_pauses_instead_of_letting_a_tag_vote(self):
+        # A duel (margin 0.04 < 0.15) inside an H tag window: nobody clearly has the ball.
+        result = decode(*self._tracking_and_tags(40, .52, .9, 1., .5))
+        self.assertTrue(np.all(result.labels == "D"), result.labels)
+        self.assertEqual(result.diagnostics["team_sources"],
+                         {"tracking": 0, "contested": 40, "tag": 0})
+
+    def test_decisive_tracking_turnover_is_not_overruled_by_a_stale_tag(self):
+        match, features, priors = self._tracking_and_tags(60, .3, .4, 1., .5)
+        features.team_evidence[:30] = [.9, .1]  # H establishes possession first
+        result = decode(match, features, priors)
+        self.assertEqual(label_transitions(result.labels), [(30, "H", "A")])  # H backdated to 0
+
+    def test_tag_fills_frames_where_tracking_is_below_the_floor(self):
+        # Zero reliability must carry neutral evidence (contracts rule); .1 is a weak A reading.
+        for tracking_home, tracking_rel in ((.5, 0.), (.1, .1)):
+            with self.subTest(tracking_rel=tracking_rel):
+                result = decode(*self._tracking_and_tags(
+                    30, tracking_home, tracking_rel, 1., .5))
+                self.assertEqual(result.labels.tolist(), list("H" * 30))
+                self.assertEqual(result.diagnostics["team_sources"],
+                                 {"tracking": 0, "contested": 0, "tag": 30})
+
+    def test_two_sub_floor_sources_no_longer_add_up_to_a_decision(self):
+        # Averaging summed reliabilities (.2 + .1 >= .25); one source must clear the floor alone.
+        result = decode(*self._tracking_and_tags(30, .9, .2, 1., .1))
+        self.assertTrue(np.all(result.labels == "D"))
+
+    def test_tag_weight_below_decoder_floor_fails(self):
+        # Review note: under Decision 7 a non-zero tag weight below the floor disables tags silently.
+        inputs = self._tracking_and_tags(30, .5, 0., 1., .2)  # tag evidence present
+        with self.assertRaisesRegex(ValueError, "team_reliability"):
+            decode(*inputs, {"tagging": {"team_reliability": .2}})
+        for ok in (0., .25):
+            with self.subTest(team_reliability=ok):
+                decode(*inputs, {"tagging": {"team_reliability": ok}})
+
+    def test_tag_weight_check_skips_tracking_only_runs(self):
+        # Almaz, PR #13: with tags disabled or missing, an unused default tag weight (0.5) below
+        # a raised decoder floor must not reject a valid tracking-only run.
+        config = {"data": {"load_tags": False}, "state_machine": {"team_reliability_min": .75}}
+        result = decode(*self._tracking_and_tags(30, .95, .9, .5, 0.), config)
+        self.assertEqual(result.labels.tolist(), list("H" * 30))
+        # The same floor still rejects the weight once tag evidence is actually supplied.
+        with self.assertRaisesRegex(ValueError, "team_reliability"):
+            decode(*self._tracking_and_tags(30, .95, .9, 1., .5), config)
+
+    # Decision 8: confirmed changes are backdated to their first supporting frame.
+    def test_backdating_spans_paused_frames_and_never_overwrites_other_support(self):
+        result = decode(*evidence_sequence("H" * 30 + "A" * 10 + "." * 5 + "A" * 15 + "H" * 5))
+        self.assertEqual(result.labels[:30].tolist(), list("H" * 30))
+        self.assertEqual(result.labels[30:60].tolist(), list("A" * 30))  # incl. the 5 paused
+        (_, turnover) = result.diagnostics["transitions"]
+        self.assertEqual((turnover["frame"], turnover["confirmed_frame"]), (30, 59))
+        # Beks, PR #13: a stray touch, 5 s with no support, then 24 A confirms A, but the
+        # boundary stays at the start of the latest support run (156), not the stray touch (30).
+        result = decode(*evidence_sequence("H" * 30 + "A" + "." * 125 + "A" * 24 + "H" * 5))
+        (_, turnover) = result.diagnostics["transitions"]
+        self.assertEqual((turnover["frame"], turnover["confirmed_frame"]), (156, 179))
+        self.assertTrue(np.all(result.labels[:156] == "H"))
+        # Short gaps (a duel, an A every 6th frame) do not break the run: full backdate.
+        result = decode(*evidence_sequence("H" * 30 + ("A" + "." * 5) * 25))
+        self.assertEqual(label_transitions(result.labels, start=30), [(30, "H", "A")])
+        # D is never backdated: two stray dead frames do not turn the gap between into a stop.
+        result = decode(*evidence_sequence("H" * 30 + "D" + "." * 140 + "D"))
+        self.assertEqual(label_transitions(result.labels, start=30), [(171, "H", "D")])
+        # A competing candidate restarts the count, so backdating cannot reach past it.
+        result = decode(*evidence_sequence("H" * 30 + "A" * 10 + "D" + "A" * 25))
+        self.assertEqual(label_transitions(result.labels, start=30), [(41, "H", "A")])
+
+    def test_safety_valve_exit_from_a_confirmed_stop_is_not_backdated(self):
+        # Team evidence alone ends a latched stop only after latched_team_dwell (75 frames), and
+        # stays at that confirmation frame: it is too weak to move the stop's end earlier.
+        result = decode(*evidence_sequence("H" * 30 + "D" * 10 + "H" * 80))
+        exit_ = result.diagnostics["transitions"][-1]
+        self.assertEqual((exit_["frame"], exit_["confirmed_frame"], exit_["to_state"]),
+                         (114, 114, "H"))
+        self.assertTrue(np.all(result.labels[31:114] == "D"))
+
+    # Decision 9 (ported from PR #16): tag protection and restart look-ahead.
+    def _stale_tag_turnover(self, n_after):
+        # H by tracking, then A tracking every 3rd frame with an H phase tag on the frames between.
+        match, features, priors = evidence_sequence("H" * 30 + "." * n_after)
+        for i in range(30, 30 + n_after):
+            if i % 3 == 0:
+                features.team_evidence[i], features.team_reliability[i] = (.05, .95), .9
+            else:
+                priors.tag_team_evidence[i], priors.tag_team_reliability[i] = (1., 0.), .5
+        return match, features, priors
+
+    def test_stale_tag_cannot_cancel_a_tracking_turnover(self):
+        result = decode(*self._stale_tag_turnover(90))
+        self.assertEqual(label_transitions(result.labels, start=30), [(30, "H", "A")])
+        self.assertGreater(result.diagnostics["protected_tracking_frames"], 0)
+
+    def test_opposing_tracking_still_cancels_a_pending_turnover(self):
+        match, features, priors = self._stale_tag_turnover(90)
+        features.team_evidence[60], features.team_reliability[60] = (.95, .05), .9  # real H
+        priors.tag_team_reliability[60] = 0.
+        result = decode(match, features, priors)
+        # A support before 60 is discarded; the 20 A frames after it are under the 25-frame dwell.
+        self.assertEqual(label_transitions(result.labels, start=30), [])
+
+    def test_tag_protection_expires_with_the_evidence_window(self):
+        match, features, priors = evidence_sequence("H" * 30 + "A" * 5 + "." * 200 + "A" * 20)
+        priors.tag_team_evidence[35:235] = (1., 0.)  # H phase tag after 5 A tracking frames
+        priors.tag_team_reliability[35:235] = .5
+        result = decode(match, features, priors)
+        # Once the 5 A frames are older than evidence_window_s, the H tag cancels them again, so
+        # 20 later A frames alone are under the dwell: no turnover.
+        self.assertEqual(label_transitions(result.labels, start=30), [])
+        self.assertEqual(result.diagnostics["protected_tracking_frames"], 150)
+
+    def test_restart_lookahead_puts_the_boundary_on_the_restart_frame(self):
+        for gap, boundary in ((20, 30), (49, 30), (50, 81)):
+            with self.subTest(gap=gap):
+                result = decode(*evidence_sequence("D" * 30 + "R" + "." * gap + "H" * 25))
+                self.assertEqual(label_transitions(result.labels), [(boundary, "D", "H")])
+        # Another team seen in between cancels the look-ahead: the boundary stays at the H run.
+        result = decode(*evidence_sequence("D" * 30 + "R" + "." * 5 + "AAA" + "." * 5 + "H" * 25))
+        self.assertEqual(label_transitions(result.labels), [(44, "D", "H")])
+        # A new stop in between clears it and re-arms the latch: H alone needs fresh proof.
+        result = decode(*evidence_sequence("D" * 30 + "R" + "." * 5 + "DD" + "." * 5 + "H" * 25))
+        self.assertTrue(np.all(result.labels == "D"))
+        # Pre-commit review: a stray H right after the restart protects the A tags that follow;
+        # those protected A votes still count as "another team seen", so no look-ahead jump.
+        match, features, priors = evidence_sequence("D" * 30 + "R" + "H" + "." * 28 + "H" * 25)
+        priors.tag_team_evidence[32:41], priors.tag_team_reliability[32:41] = (0., 1.), .5
+        result = decode(match, features, priors)
+        self.assertGreater(result.diagnostics["protected_tracking_frames"], 0)
+        self.assertEqual(label_transitions(result.labels), [(60, "D", "H")])
+        with self.assertRaisesRegex(ValueError, "restart_lookahead_s"):
+            decode(*evidence_sequence("H"), {"state_machine": {"restart_lookahead_s": -.1}})
 
     def test_live_play_between_stop_clues_does_not_enter_dead(self):
         # Beks's review: isolated stops split by a restart and live play must not combine.
@@ -256,13 +437,14 @@ class StateMachineValidationTests(unittest.TestCase):
 
     def test_pending_evidence_expires_after_evidence_window(self):
         # Almaz's review (2026-11-10): 40s-old support must not combine with a fresh touch.
-        result = decode(*evidence_sequence("H" * 30 + "A" * 14 + "." * 1000 + "A"))
+        result = decode(*evidence_sequence("H" * 30 + "A" * 24 + "." * 1000 + "A"))
         self.assertEqual(label_transitions(result.labels, start=30), [])
-        # Within the default 150-frame window the gap is still tolerated (Decision 3).
-        result = decode(*evidence_sequence("H" * 30 + "A" * 14 + "." * 130 + "A"))
+        # Within the default 150-frame window the gap is still tolerated (Decision 3); the
+        # 120-frame gap breaks the support run for backdating, so the boundary is the last A.
+        result = decode(*evidence_sequence("H" * 30 + "A" * 24 + "." * 120 + "A"))
         self.assertEqual(label_transitions(result.labels, start=30), [(174, "H", "A")])
         # Just outside it, the oldest support has aged out.
-        result = decode(*evidence_sequence("H" * 30 + "A" * 14 + "." * 137 + "A"))
+        result = decode(*evidence_sequence("H" * 30 + "A" * 24 + "." * 127 + "A"))
         self.assertEqual(label_transitions(result.labels, start=30), [])
 
     def test_confirmed_live_play_cancels_pending_stop(self):
@@ -274,49 +456,62 @@ class StateMachineValidationTests(unittest.TestCase):
         self.assertEqual(label_transitions(result.labels, start=30), [(56, "H", "D")])
 
     def test_incumbent_support_cancels_pending_turnover(self):
-        result = decode(*evidence_sequence("H" * 30 + "A" * 14 + "H" + "A" * 15))
-        self.assertEqual(label_transitions(result.labels, start=30), [(59, "H", "A")])
+        result = decode(*evidence_sequence("H" * 30 + "A" * 24 + "H" + "A" * 25))
+        self.assertEqual(label_transitions(result.labels, start=30), [(55, "H", "A")])
 
     def test_competing_stop_candidate_cancels_pending_turnover(self):
         # One stop observation cannot establish D, but invalidates the A run.
-        result = decode(*evidence_sequence("H" * 30 + "A" * 14 + "D" + "A" * 15))
-        self.assertEqual(label_transitions(result.labels, start=30), [(59, "H", "A")])
+        result = decode(*evidence_sequence("H" * 30 + "A" * 24 + "D" + "A" * 25))
+        self.assertEqual(label_transitions(result.labels, start=30), [(55, "H", "A")])
 
     def test_unknown_team_restart_does_not_guess_team_current_policy(self):
-        result = decode(*evidence_sequence("H" * 30 + "D" * 10 + "R" * 50 + "A" * 15))
-        self.assertTrue(np.all(result.labels[40:104] == "D"))
+        # Decision 9: within restart_lookahead_s (50 frames) of the restart signal at 40, the
+        # first team to take over owns the restart; beyond it, no team is guessed.
+        result = decode(*evidence_sequence("H" * 30 + "D" * 10 + "R" * 50 + "A" * 25))
         self.assertEqual(label_transitions(result.labels, start=30),
-                         [(31, "H", "D"), (104, "D", "A")])
+                         [(31, "H", "D"), (40, "D", "A")])
+        result = decode(*evidence_sequence("H" * 30 + "D" * 10 + "R" * 51 + "A" * 25))
+        self.assertTrue(np.all(result.labels[31:91] == "D"))
+        self.assertEqual(label_transitions(result.labels, start=30),
+                         [(31, "H", "D"), (91, "D", "A")])
 
     def test_half_reset_discards_pending_and_confirmed_state(self):
         for gap in (0, 5):
-            for first in ("H" * 30 + "A" * 14, "A" * 30 + "H" * 14):
+            for first in ("H" * 30 + "A" * 24, "A" * 30 + "H" * 24):
                 with self.subTest(gap=gap, first=first[0]):
+                    # 20 second-half A frames are under the 25-frame dwell: they would only
+                    # confirm A if pending (24 A) or confirmed (A) state leaked across the reset.
                     symbols = first + "A" * gap + "A" * 20
                     half = [1] * len(first) + [0] * gap + [2] * 20
                     result = decode(*evidence_sequence(symbols, half=half))
-                    self.assertEqual(result.labels[-20:].tolist(), list("D" * 14 + "A" * 6))
+                    self.assertEqual(result.labels[-20:].tolist(), list("D" * 20))
                     self.assertTrue(np.all(result.labels[len(first):len(first) + gap] == "X"))
 
     def test_final_frame_confirms_only_when_dwell_completed(self):
-        for count in (14, 15):
+        for count in (24, 25):
             with self.subTest(count=count):
                 result = decode(*evidence_sequence("H" * 30 + "A" * count))
-                events = [] if count == 14 else [(44, "H", "A")]
+                events = [] if count == 24 else [(30, "H", "A")]
                 self.assertEqual(label_transitions(result.labels, start=30), events)
 
     def test_measured_boundaries_and_missed_short_possession(self):
         # Decision 6 (2026-11-09): Restart and Same-team restart now carry +1 frame extra delay --
         # the cost of requiring the inserted "R" (restart proof) before team evidence counts.
-        expected = (([14], 0, 0), ([1], 0, 0), ([15], 0, 0),
-                    ([1, 15], 0, 0), ([114], 0, 0), ([], 2, 0),
-                    ([14, 14], 0, 0), ([14, 14], 0, 0))
+        # Decision 8 (2026-11-11): team changes are backdated to their first supporting frame;
+        # stops keep their 2-frame dwell (+1); restarts land on the restart frame (Decision 9).
+        # The 100-frame occlusion breaks the support run, so that turnover lands at its last run
+        # (+112), still earlier than unbacked confirmation (+124): the cost of not reaching back
+        # to a stray touch across a long gap (Beks, PR #13).
+        expected = (([0], 0, 0), ([1], 0, 0), ([0], 0, 0),
+                    ([1, 0], 0, 0), ([112], 0, 0), ([], 2, 0),
+                    ([0, 0], 0, 0), ([0, 0], 0, 0))
         for case, wanted in zip(TIMING_CASES, expected):
             with self.subTest(case=case.name):
                 self.assertEqual(measure_timing(case), wanted)
                 result = decode(*evidence_sequence(case.symbols))
+                # A change backdated to a half's first frame has no earlier label to differ from.
                 recorded = [(t["frame"], t["from_state"], t["to_state"])
-                            for t in result.diagnostics["transitions"]]
+                            for t in result.diagnostics["transitions"] if t["frame"] > 0]
                 self.assertEqual(recorded, label_transitions(result.labels))
 
     def test_exhaustive_short_sequences_against_offline_grouped_reference(self):
@@ -329,7 +524,8 @@ class StateMachineValidationTests(unittest.TestCase):
         for length in range(7):
             for symbols in product("HAD.", repeat=length):
                 result = decode(*evidence_sequence(symbols), config)
-                expected = grouped_reference(symbols, [1] * length, 3, 2, latched_required=75)
+                expected = grouped_reference(symbols, [1] * length, 3, 2, latched_required=75,
+                                             lookahead=50)
                 self.assertEqual(result.labels.tolist(), expected, "".join(symbols))
 
     def test_seeded_half_sequences_against_reference(self):
@@ -339,7 +535,7 @@ class StateMachineValidationTests(unittest.TestCase):
             symbols = rng.choice(list("HAD.R"), 80).tolist()
             half = [1] * 35 + [0] * 5 + [2] * 40
             result = decode(*evidence_sequence(symbols, half=half), config)
-            expected = grouped_reference(symbols, half, 3, 2, latched_required=75)
+            expected = grouped_reference(symbols, half, 3, 2, latched_required=75, lookahead=50)
             self.assertEqual(result.labels.tolist(), expected, sample)
 
     def test_team_swap_symmetry_with_conflicting_geometry_and_tags(self):
@@ -397,12 +593,17 @@ class StateMachineValidationTests(unittest.TestCase):
         priors = build_priors(match, features)
         prediction = decode(match, features, priors)
         events = label_transitions(prediction.labels)
-        self.assertEqual([(a, b) for _, a, b in events], [("D", "H"), ("H", "D"), ("D", "H")])
+        # Decision 8: H is backdated to frame 0, so the half-start D never appears in labels.
+        self.assertEqual([(a, b) for _, a, b in events], [("H", "D"), ("D", "H")])
         # E3 first rejects the jump, then needs 15 still observations; E2 adds one frame.
         # Decision 6 (2026-11-09): the final restart now also waits for E3's own confirmed-live
         # signal before team evidence counts at all (74 -> 79) -- team proximity alone is no
         # longer enough to leave a confirmed stop, which is the whole point of that decision.
-        self.assertEqual(events, [(14, "D", "H"), (46, "H", "D"), (79, "D", "H")])
+        # Decision 8 (2026-11-11): the stop is not backdated (E3's first dead frame 45, plus E2's
+        # 2-frame dwell); the restart is backdated to the first H frame after E3's live
+        # confirmation clears the latch (65), though only confirmed W frames later.
+        self.assertEqual(events, [(46, "H", "D"), (65, "D", "H")])
+        self.assertEqual(prediction.diagnostics["transitions"][-1]["confirmed_frame"], 89)
         with tempfile.TemporaryDirectory() as temporary:
             first, second = Path(temporary) / "first.csv", Path(temporary) / "second.csv"
             write_submission(prediction, first, n_expected=100)

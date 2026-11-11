@@ -19,7 +19,8 @@ docs/team/decisions/2026-10-23-e2-data-evidence-and-state-machine-design.md. Sum
 
 - Evidence is a (value, reliability) pair, never a hard per-frame guess (see Decision 1 there).
 - This is a hysteresis state machine, not a per-frame classifier smoothed afterwards: a candidate
-  state must win for `dwell_frames` *occurrences* before the state actually switches.
+  state must win for `dwell_frames` *occurrences* before a change is confirmed (team changes are
+  then backdated to the start of their latest support run, Decision 8).
 - Dead and team transitions get separate dwell lengths (dead shorter -- stoppages are often
   announced cleanly; team changes need more sustained proof).
 - Every half starts in D. Correct for the second half (graded before its own kickoff); merely
@@ -49,6 +50,19 @@ docs/team/decisions/2026-10-23-e2-data-evidence-and-state-machine-design.md. Sum
   just theorized): sustained team evidence can still exit a latched `D`, but only after
   `latched_team_dwell_s` -- several times longer than an ordinary team change needs -- precisely
   because that length is what makes it categorically different from brief proximity.
+- Decision 7: tracking and Smart Tagging team evidence are never averaged. Tracking whose
+  reliability clears `team_reliability_min` decides the frame alone: decisive tracking votes,
+  contested tracking (a duel) gives no candidate. Tags fill only frames where tracking is below
+  that floor. `diagnostics["team_sources"]` counts graded frames decided each way.
+- Decision 8: a team change needs `team_dwell_s` = 1.0 s of support, because CHALLENGE.md
+  requires *controlled* possession, not a touch or deflection. The dwell decides whether a team
+  change happened; the boundary is then backdated to the start of its latest support run (a gap
+  longer than the dwell breaks a run; not for D, and not for the Decision 6 safety valve). Each
+  transition records `frame` (boundary) and `confirmed_frame`.
+- Decision 9 (ported from Almaz's PR #16): a frame decided only by a tag cannot cancel a pending
+  turnover while it has tracking support inside `evidence_window_s`; and the first team change
+  after a restart signal takes the restart frame as its boundary when its support starts within
+  `restart_lookahead_s` and no stop or other team came between.
 
 `config` follows the same convention as `dead_ball.DeadBallConfig` / `tagging.TaggingConfig`: the
 caller passes the *whole* shared pipeline dict, and this module reads only its own
@@ -82,18 +96,21 @@ class StateMachineConfig:
     fps: float = 25.0
 
     # Hysteresis: occurrences (not necessarily consecutive, see Decision 3) a candidate needs
-    # before the state actually switches.
+    # before a change is confirmed (team changes are then backdated, Decision 8).
     dead_dwell_s: float = 0.08   # ~2 frames -- Almaz's prior already waits ~0.6s, see Decision 5
-    team_dwell_s: float = 0.60   # ~15 frames -- a turnover should need more than a touch
+    # CHALLENGE.md: a change needs *controlled* possession ("a player keeps the ball for a few
+    # seconds"); a touch, deflection or won duel without control does not count. Decision 8.
+    team_dwell_s: float = 1.0    # 25 frames at 25 fps; latency is undone by backdating
 
     # Dead/alive decision.
     dead_threshold: float = 0.6        # priors.dead_evidence needed to call a frame "dead"
     dead_reliability_min: float = 0.3  # below this, dead_evidence is treated as not informative
     restart_weight: float = 0.5        # restart_evidence counts against calling a frame dead
 
-    # Team decision (H vs A), after fusing features.team_evidence and priors.tag_team_evidence.
+    # Team decision (H vs A). Decision 7: each frame is decided by one source -- tracking if its
+    # reliability clears the floor, otherwise the tag -- never an average of the two.
     team_margin_threshold: float = 0.15   # required |evidence[H] - evidence[A]| to be decisive
-    team_reliability_min: float = 0.25    # combined reliability floor to trust that margin
+    team_reliability_min: float = 0.25    # a source's own reliability floor to trust that margin
 
     # Decision 6: once dead_confirmed is latched (a real stop was seen), team evidence alone
     # cannot exit D. One of these must also hold, on some frame since the stop was confirmed:
@@ -126,6 +143,11 @@ class StateMachineConfig:
     # gap mid-turnover still works) without letting a touch from 40s ago combine with one now.
     evidence_window_s: float = 6.0   # ~150 frames
 
+    # Ported from #16 (Almaz): the first team change after a restart signal gets its boundary on
+    # the restart frame when its support starts within this long and nothing conflicts between.
+    # CHALLENGE.md: "whenever play restarts ... there is a clear possessor". Decision 9.
+    restart_lookahead_s: float = 2.0  # ~50 frames
+
     def __post_init__(self):
         for field_ in fields(self):
             value = getattr(self, field_.name)
@@ -137,6 +159,8 @@ class StateMachineConfig:
             raise ValueError("dwell durations must be positive")
         if self.latched_team_dwell_s <= self.team_dwell_s:
             raise ValueError("state_machine.latched_team_dwell_s must exceed team_dwell_s")
+        if self.restart_lookahead_s < 0:
+            raise ValueError("state_machine.restart_lookahead_s must be nonnegative")
         if self.evidence_window_s < max(self.dead_dwell_s, self.team_dwell_s):
             raise ValueError("state_machine.evidence_window_s must be at least every dwell")
         for name in ("dead_threshold", "dead_reliability_min", "restart_weight",
@@ -165,6 +189,10 @@ class StateMachineConfig:
     def evidence_window_frames(self) -> int:
         return max(1, math.ceil(self.evidence_window_s * self.fps))
 
+    @property
+    def restart_lookahead_frames(self) -> int:
+        return math.ceil(self.restart_lookahead_s * self.fps)
+
 
 def _section(config, name, cls):
     """Pull this module's own section out of the shared pipeline config dict.
@@ -184,22 +212,21 @@ def _section(config, name, cls):
     return cls(**options)
 
 
-def _combine(evidence_a, reliability_a, evidence_b, reliability_b):
-    """Fuse two H/A evidence matrices using their per-frame reliability weights.
+def _team_call(evidence, reliability, config):
+    """For one H/A source: (reliable, decisive, signed margin H - A) per frame.
 
-    Neutral (0.5, reliability 0) when both inputs are unreliable, per the "no evidence => [0.5,
-    0.5] / reliability 0" convention in docs/team/INTERFACES.md.
+    Subtract both columns so swapping teams negates the margin symmetrically. Allow only
+    floating-point roundoff at an inclusive threshold; ties and zero-weight clues stay
+    non-decisive even when configured floors are zero.
     """
-    total = reliability_a + reliability_b
-    safe_total = np.where(total > 0, total, 1.0)
-    combined_evidence = np.where(
-        total[:, None] > 0,
-        (evidence_a * reliability_a[:, None] + evidence_b * reliability_b[:, None])
-        / safe_total[:, None],
-        0.5,
-    )
-    combined_reliability = np.minimum(1.0, total)
-    return combined_evidence, combined_reliability
+    evidence = np.asarray(evidence, dtype=float)
+    reliability = np.asarray(reliability, dtype=float)
+    signed_margin = evidence[:, 0] - evidence[:, 1]
+    margin = np.abs(signed_margin)
+    roundoff = 8 * np.finfo(float).eps
+    reliable = (reliability > 0) & (reliability >= config.team_reliability_min)
+    decisive = reliable & (margin > roundoff) & (margin >= config.team_margin_threshold - roundoff)
+    return reliable, decisive, signed_margin
 
 
 def _validate_alignment(match, features, priors, half):
@@ -234,7 +261,8 @@ def _validate_alignment(match, features, priors, half):
 def _decisive_state_per_frame(features, priors, config: StateMachineConfig):
     """One candidate per frame (H, A, D, or None), plus two per-frame booleans Decision 6 needs:
     `is_dead` (this frame alone looks confidently dead) and `exit_dead_ok` (this frame alone is
-    positive proof play has resumed -- not merely the absence of a dead signal).
+    positive proof play has resumed -- not merely the absence of a dead signal) -- and the masks
+    of which team source decided each live frame, for diagnostics.
 
     Dead/alive is checked before team identity: a confidently dead frame has no team to assign,
     and a stale team_evidence reading during a stoppage should not outvote a reliable dead signal.
@@ -260,25 +288,23 @@ def _decisive_state_per_frame(features, priors, config: StateMachineConfig):
     # clear the stop latch. Resolve contradictory clues with dead precedence.
     exit_dead_ok = (~is_dead) & (live_confirmed | restart_confirmed)
 
-    team_evidence, team_reliability = _combine(
-        np.asarray(features.team_evidence, dtype=float),
-        np.asarray(features.team_reliability, dtype=float),
-        np.asarray(priors.tag_team_evidence, dtype=float),
-        np.asarray(priors.tag_team_reliability, dtype=float),
-    )
-    # Subtract both columns so swapping teams negates the margin symmetrically.
-    # Allow only floating-point roundoff at an inclusive threshold; ties and
-    # zero-weight clues remain non-decisive even when configured floors are zero.
-    signed_margin = team_evidence[:, 0] - team_evidence[:, 1]
-    margin = np.abs(signed_margin)
-    roundoff = 8 * np.finfo(float).eps
-    team_reliable = ((~is_dead) & (team_reliability > 0)
-                     & (team_reliability >= config.team_reliability_min)
-                     & (margin > roundoff)
-                     & (margin >= config.team_margin_threshold - roundoff))
-    candidate[team_reliable & (signed_margin > 0)] = H
-    candidate[team_reliable & (signed_margin < 0)] = A
-    return candidate, is_dead, exit_dead_ok
+    # Decision 7: tracking-first fusion. Reliable tracking owns the frame: decisive tracking
+    # votes, contested tracking (a duel) gives no candidate, so a pending count pauses. Phase-level
+    # tags span whole attacking windows and usually name the incumbent, so letting them fill a duel
+    # -- or averaging them in -- cancels real turnovers. Tags fill only sub-floor tracking frames.
+    track_reliable, track_decisive, track_margin = _team_call(
+        features.team_evidence, features.team_reliability, config)
+    _, tag_decisive, tag_margin = _team_call(
+        priors.tag_team_evidence, priors.tag_team_reliability, config)
+    use_tag = ~track_reliable & tag_decisive
+    signed_margin = np.where(track_reliable, track_margin, tag_margin)
+    team_decided = (~is_dead) & (track_decisive | use_tag)
+    candidate[team_decided & (signed_margin > 0)] = H
+    candidate[team_decided & (signed_margin < 0)] = A
+    sources = {"tracking": (~is_dead) & track_decisive,
+               "contested": (~is_dead) & track_reliable & ~track_decisive,
+               "tag": (~is_dead) & use_tag}
+    return candidate, is_dead, exit_dead_ok, sources
 
 
 def decode(match, features, priors, config=None) -> Prediction:
@@ -315,7 +341,8 @@ def decode(match, features, priors, config=None) -> Prediction:
     # bare dict .get() that would raise the wrong exception type on bad input), so the two can't
     # silently drift back into collision (e.g. someone raising tagging.restart_strength without
     # noticing this coupling).
-    tagging_restart_strength = _section(config, "tagging", TaggingConfig).restart_strength
+    tagging = _section(config, "tagging", TaggingConfig)
+    tagging_restart_strength = tagging.restart_strength
     if settings.restart_evidence_threshold <= tagging_restart_strength:
         raise ValueError(
             "state_machine.restart_evidence_threshold ({}) must be strictly greater than "
@@ -330,12 +357,22 @@ def decode(match, features, priors, config=None) -> Prediction:
             "dead_ball.evidence_weight ({}) is below state_machine.dead_reliability_min ({}), "
             "so every dead-ball clue would be ignored".format(
                 dead_ball.evidence_weight, settings.dead_reliability_min))
-
     half = np.asarray(match.half)
     _validate_alignment(match, features, priors, half)
+    # Decision 7: each source must clear team_reliability_min alone, and every tag frame carries
+    # tagging.team_reliability, so a lower non-zero weight would silently disable tag evidence.
+    # Only when tag evidence is actually supplied: tracking-only runs (tags disabled or missing)
+    # must not fail on an unused tag weight (Almaz, PR #13).
+    if (np.any(np.asarray(priors.tag_team_reliability) > 0)
+            and 0 < tagging.team_reliability < settings.team_reliability_min):
+        raise ValueError(
+            "tagging.team_reliability ({}) is below state_machine.team_reliability_min ({}), "
+            "so tag team evidence would never decide a frame".format(
+                tagging.team_reliability, settings.team_reliability_min))
     n = len(half)
 
-    candidate, is_dead, exit_dead_ok = _decisive_state_per_frame(features, priors, settings)
+    candidate, is_dead, exit_dead_ok, sources = _decisive_state_per_frame(
+        features, priors, settings)
 
     labels = np.full(n, X, dtype=object)
     transitions = []
@@ -350,6 +387,12 @@ def decode(match, features, priors, config=None) -> Prediction:
     # or a brief restart confirmation is remembered rather than needing to coincide with the exact
     # frame team evidence is trying to act on.
     dead_confirmed = False
+    # Decision 9, tag protection: latest tracking frame supporting pending_state. It goes stale by
+    # itself: any reset starts a new pending run after it, and window trimming moves past it.
+    last_tracking, protected = None, 0
+    # Decision 9, restart look-ahead: first restart signal while in D, and the team candidates
+    # seen since. A stop, a half change or leaving D clears it.
+    restart_at, restart_teams = None, set()
 
     for i in range(n):
         this_half = int(half[i])
@@ -365,10 +408,12 @@ def decode(match, features, priors, config=None) -> Prediction:
             current_state = D
             pending_state, pending_frames = None, deque()
             dead_confirmed = False
+            restart_at = None
         previous_half = this_half
 
         if is_dead[i]:
             dead_confirmed = True
+            restart_at = None
         elif exit_dead_ok[i] and pending_state == D:
             # Confirmed live play invalidates pending stop evidence: two isolated stop frames
             # separated by live play are not one stop. Keeps the current H/A label as-is.
@@ -390,8 +435,22 @@ def decode(match, features, priors, config=None) -> Prediction:
                 # no reason. A pending D-candidate is never touched here either way -- entering D
                 # was never gated by this latch, only leaving it.
                 pending_state, pending_frames = None, deque()
+        if exit_dead_ok[i] and current_state == D and restart_at is None:
+            restart_at, restart_teams = i, set()
 
         this_candidate = candidate[i]
+        # Record every team vote since the restart before protection can hide it: a protected
+        # tag still means another team was seen, so the look-ahead must not jump over it.
+        if this_candidate in (H, A) and restart_at is not None:
+            restart_teams.add(this_candidate)
+        # Decision 9: a coarse phase tag usually names the incumbent; it must not erase fresh
+        # tracking support for a pending turnover. Opposing *tracking* still cancels it.
+        if (this_candidate is not None and sources["tag"][i] and pending_state in (H, A)
+                and this_candidate != pending_state and last_tracking is not None
+                and pending_frames and last_tracking >= pending_frames[0]
+                and i - last_tracking <= settings.evidence_window_frames):
+            this_candidate = None
+            protected += 1
         if this_candidate is None:
             # Decision 3: no decisive signal this frame -- pause the count, don't reset it. The
             # ball is missing on 41% of graded frames, in clusters; resetting here would make a
@@ -408,6 +467,8 @@ def decode(match, features, priors, config=None) -> Prediction:
             pending_frames.append(i)
         else:
             pending_state, pending_frames = this_candidate, deque([i])
+        if sources["tracking"][i]:
+            last_tracking = i
 
         gated = this_candidate in (H, A) and current_state == D and dead_confirmed
         # Ordinary dwell: bounded evidence age (evidence_window_s), still tolerant of occlusions.
@@ -438,8 +499,31 @@ def decode(match, features, priors, config=None) -> Prediction:
         else:
             required = settings.team_dwell_frames
         if len(pending_frames) >= required:
+            # Decision 8: for a team change the dwell decides *whether* it happened; the boundary
+            # moves back towards its first support, where the definition puts it. Every frame
+            # in between was paused or supported this candidate, so nothing else is overwritten.
+            # Not for the safety valve (team evidence alone ending a confirmed stop is too weak),
+            # nor for D: its 2-frame dwell costs ~1 frame, while backdating could turn up to
+            # evidence_window_s of unobserved play into a stoppage between two stray dead frames.
+            # Only back through the latest support run: a gap longer than the dwell with no
+            # support breaks it, so a stray touch before an occlusion cannot pull the boundary
+            # back (Beks, PR #13). Never later than unbacked confirmation would have been.
+            start = i
+            if this_candidate != D and not gated:
+                for earlier in reversed(pending_frames):
+                    if start - earlier > settings.team_dwell_frames:
+                        break
+                    start = earlier
+                # Decision 9: only this team seen since the restart signal, within the window.
+                # Only ever earlier: a half-start kickoff may already be backdated before it.
+                if (restart_at is not None
+                        and 0 < start - restart_at <= settings.restart_lookahead_frames
+                        and restart_teams <= {this_candidate}):
+                    start = restart_at
+            labels[start:i] = this_candidate
             transitions.append({
-                "frame": int(match.frame[i]) if hasattr(match, "frame") else i,
+                "frame": int(match.frame[start]) if hasattr(match, "frame") else start,
+                "confirmed_frame": int(match.frame[i]) if hasattr(match, "frame") else i,
                 "from_state": current_state, "to_state": this_candidate,
                 "reason": "{} decisive occurrences for the new candidate".format(len(pending_frames)),
             })
@@ -450,9 +534,14 @@ def decode(match, features, priors, config=None) -> Prediction:
                 # would still see dead_confirmed True from here and could wipe an unrelated,
                 # never-gated turnover's progress, same failure mode as the guard just above.
                 dead_confirmed = False
+                restart_at = None
             current_state = this_candidate
             pending_state, pending_frames = None, deque()
 
         labels[i] = current_state
 
-    return Prediction(labels=labels, diagnostics={"transitions": transitions})
+    graded = half > 0
+    team_sources = {name: int(np.count_nonzero(mask & graded)) for name, mask in sources.items()}
+    return Prediction(labels=labels, diagnostics={"transitions": transitions,
+                                                  "team_sources": team_sources,
+                                                  "protected_tracking_frames": protected})

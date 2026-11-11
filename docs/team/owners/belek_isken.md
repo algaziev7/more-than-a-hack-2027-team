@@ -1,12 +1,12 @@
 # Belek and Isken — Possession state machine
 
 - Owner: Belek and Isken
-- Status: Belek's decoder in PR #6; Isken's corrective follow-up awaits review
-- Branch: Belek on `e2/state-v1`; Isken on `e2/decoder-edge-fixes`
+- Status: decoder merged to `main` (PR #6, with Isken's PR #12); Belek on tracking-first fusion
+- Branch: Belek on `e2/tracking-first-fusion`; `e2/state-v1` and `e2/decoder-edge-fixes` are merged
 - Reviewer: E4
 - Owned files: possession/state_machine.py; state-machine configuration and tests
 - Current milestone: synthetic decoder validation and E3/export integration
-- Last update: 2026-11-10 (Isken's track)
+- Last update: 2026-11-11 (Belek's track, Decision 8)
 
 ## Pair coordination
 
@@ -98,7 +98,71 @@ When E4 features exist, connect them to the synthetic integration slice.
   E4 feature builder, and E5 pipeline integration. Hidden-match improvement is
   not measured; the public answer window was not used.
 
-## Belek's track (`e2/state-v1`)
+## Belek's current task: tracking-first fusion (`e2/tracking-first-fusion`)
+
+Decision 7 in the decision doc. Tracking and tag team evidence are no longer averaged: reliable
+tracking decides the frame alone (contested tracking gives no candidate), and tags fill only
+frames where tracking is below `team_reliability_min`. `_combine` is removed. `decode()` now also
+returns `diagnostics["team_sources"]`, graded-frame counts decided by tracking, by tags, or left
+contested. Paired with Beks's option (c) on `e4/reliability-v1` (reliability without the margin
+factor), agreed by message.
+
+- Review (another AI session, code reading): added a check rejecting a non-zero
+  `tagging.team_reliability` below `team_reliability_min`, which would silently disable tags;
+  fixed an invalid test input (non-neutral evidence at zero reliability). `contested` is always 0
+  with E4's current formula, which already includes the margin in reliability.
+- Tests: four new synthetic tests (contested tracking pauses; decisive tracking turnover beats a
+  stale tag; tags fill sub-floor frames; two sub-floor sources no longer combine). They failed
+  on the averaging code first, plus one config-check test. 185/185 pass on Python 3.12.16 with `requirements-team.lock`.
+- Unmeasured: effect on the real match. Next: run the local four-way comparison (current, Beks's
+  (c) only, this branch only, both) with aggregate counts only, then decide whether tag-only
+  frames should also stop resetting a tracking-based pending turnover.
+- E3 impact: unaffected directly; Beks's (c) changes E3's control check (reliability >= 0.5),
+  so Almaz should review that PR.
+
+### Decision 8 on the same branch (2026-11-11)
+
+Beks's four-way run and the new bounce-back count (aggregates, run locally) showed most added
+short possessions are brief clear opposing touches that snap straight back, not close duels.
+CHALLENGE.md requires controlled possession, so `team_dwell_s` is now 1.0 s, and confirmed changes
+are backdated to their first supporting frame (not D, not the safety valve), so the longer dwell does
+not delay boundaries. Merged `main` (E4 #14, tooling #15) first.
+
+- Tests: Isken's reference model gained backdating and still agrees on all exhaustive and seeded
+  sequences; two new tests (backdating spans paused frames only, respects window trimming, never
+  backdates D; safety valve not backdated). Pre-commit review: an instrumented decoder checked the
+  no-overwrite invariant on 3,000 random sequences (4,495 backdates, no violation).
+  Timing-dependent tests now assert `confirmed_frame`; tests with 15-frame assumptions were
+  re-derived for 25. Two E5 pipeline tests (`tests/test_pipeline.py`) updated for the new
+  boundaries, flagged for Goblin/Azamat. 190/190 pass on Python 3.12.16.
+- Beks's PR #13 review: (1) real-match counts removed from this file and the decision doc,
+  older ones included; they remain in Git history (this branch and `main` via PR #6), so the
+  RELEASE.md step-6 history audit must cover them before any public release. (2) Backdating now
+  stops at a support gap longer than the dwell, so a stray touch cannot pull a boundary back
+  across an occlusion; trade-off documented in Decision 8's amendment.
+- Almaz's PR #13 review: the tag-weight check rejected valid tracking-only runs (tags disabled,
+  raised `team_reliability_min`). It now applies only when tag evidence is actually supplied.
+  191/191 pass.
+- Decision 9 (same branch): ported #16's tag protection and restart look-ahead into the single
+  loop after comparing #13 and #16 (own comparison plus an independent review, same verdict:
+  #13 as basis). Isken's reference model gained the look-ahead and still agrees on all exhaustive
+  and seeded sequences; six new tests. 195/195 pass on Python 3.12.16. Real-match effect not run.
+  Next: Beks re-review, E5 sign-off on `tests/test_pipeline.py`, Almaz to decide on closing #16.
+- Open, outside this change: the second half is graded ~2,934 frames before its kickoff, and
+  player proximity at the centre spot reads as possession there (already true before Decision 8,
+  now from the half's first frame). Team decision needed: treat each half start like a
+  confirmed stop?
+- Measured locally with `.local/compare_variants.sh` (Python 3.12.16), at `0d637d2`, before the
+  gap-rule amendment below (not rerun since; possession count unchanged by construction, short-
+  spell durations and D totals may differ); counts kept local per
+  AGENTS.md / RELEASE.md, completion status only here. Done: `main`, Decision 7 alone and
+  Decision 8 all run end to end with the `X` count exact. Observations, not evidence for the 1 s
+  value (which rests on CHALLENGE.md's definition, Decision 8): the drop in short spells and
+  bounce-backs is expected by construction; the possession count sits between `main` and
+  Decision 7 alone; evidence coverage is identical for both #13 variants, as expected. Not a
+  score: no labels were used. Merging is a team decision.
+
+## Belek's track (`e2/state-v1`, merged)
 
 ### Completed and verified
 
@@ -127,8 +191,9 @@ declarative run-grouping oracle; it's now an independently-authored sequential w
 writeup in the decision doc's Decision 6.
 
 Verified end to end against the real match with E1's `load_match`/E3's `build_priors` (features
-still a placeholder): runs in ~15s, `X` count still exact, `D` share increased (6,384 -> 10,883
-frames) as expected -- the fix makes some previously-premature H/A calls correctly stay D longer.
+still a placeholder): runs end to end, `X` count still exact, and `D` moved in the expected
+direction -- the fix makes some previously-premature H/A calls correctly stay D longer. Real-match
+counts are kept local.
 
 Two further rounds of review on that same fix, both caught before reaching anyone else:
 
@@ -145,8 +210,8 @@ Two further rounds of review on that same fix, both caught before reaching anyon
   instant the gate lifted, and an over-broad reset that also wiped unrelated pending D-progress)
   before either reached anyone. Full history in the decision doc's two amendments to Decision 6.
 
-Real match, after three rounds: `D` share moved 6,384 -> 10,883 -> 63,518 -> 7,514 across the
-fixes -- each swing explainable by the mechanism just fixed, not noise.
+Locally, after three rounds, each change in the `D` share was explainable by the mechanism just
+fixed, not noise (counts kept local).
 
 A fourth review then found the second amendment's own fix was still too broad: `dead_confirmed`
 can latch True while `current_state` is already H/A (a stray `is_dead` frame that never reached
@@ -156,7 +221,7 @@ independently before trusting it. Fixed: the discard now requires `current_state
 moment (the candidate was actually subject to the gate), and `dead_confirmed` is explicitly
 cleared the instant a transition leaves `D`, so a stale latch from a previous stop can't
 resurface against a later, unrelated turnover either. Third amendment in the decision doc; this
-one didn't move the real-match label counts (placeholder features have zero team reliability
+one didn't move the local real-match label counts (placeholder features have zero team reliability
 everywhere, so the scenario this fixes can't occur without real tracking evidence yet).
 
 A fifth review found the safety valve itself (second amendment) never actually required
@@ -167,9 +232,9 @@ for ~37s still eventually won). My first attempted fix (reset on a per-gap bound
 just-under-the-bound gaps chain into an arbitrarily long span. Real fix: replaced the plain
 pending counter with a deque of supporting frame indices, trimmed to a genuine sliding window
 (`2 * latched_team_dwell_frames`) while gated; ordinary dwell keeps its original unbounded
-tolerance untouched. Fourth amendment in the decision doc. Real match: `D` share rose slightly,
-7,514 -> 7,970 -- this time via Smart Tagging's real (if sparse) team hints, not team evidence,
-since placeholder features still have zero reliability.
+tolerance untouched. Fourth amendment in the decision doc. Locally, `D` rose slightly, this time via Smart Tagging's
+real (if sparse) team hints, not team evidence, since placeholder features still have zero
+reliability.
 
 A sixth review (Almaz, on `96663a8`) found two more, both reproduced on synthetic inputs first:
 confirmed live play didn't cancel a pending stop (two isolated `D` frames 25 live frames apart
@@ -184,8 +249,8 @@ becomes `dead_reliability`, so a weight below the decoder's `dead_reliability_mi
 discards every stop. `decode()` now rejects that combination, as it already does for the tagging
 restart hint; disabling E3 (`enabled: false` or weight 0) is still allowed.
 
-Real match, re-run on Python 3.12.16 after both fixes (placeholder features): 14.5s, `X` count
-still exact, 103 transitions, `D` unchanged at 7,970 frames. Unchanged is plausible, not proof:
+Real match, re-run locally on Python 3.12.16 after both fixes (placeholder features): `X` count
+still exact, `D` unchanged. Unchanged is plausible, not proof:
 with zero team reliability, team evidence comes only from contiguous tagging windows, so neither
 fix's scenario likely occurs on this input yet.
 
@@ -205,8 +270,8 @@ don't treat as fixed constants" framing.
   five amendments, on `e2/state-v1` -- not yet merged to `main`.
 - Verification: `python -m unittest discover -s tests` -- 164/164 pass on Python 3.12.16 with
   `requirements-team.lock` (`pip check` clean), macOS arm64, after merging `main` (E4 features)
-  and Isken's PR #12. Earlier heads: 144/144 also on Python 3.9.6. Real-match smoke test re-run after the fifth amendment
-  (`.local/smoke_real.py`, uncommitted): `X` exact, `D` 7,970 (unchanged).
+  and Isken's PR #12. Earlier heads: 144/144 also on Python 3.9.6. Real-match smoke test re-run locally after the fifth amendment
+  (`.local/smoke_real.py`, uncommitted): `X` exact, `D` unchanged.
 - Untested: anything against real E4 features; only a neutral placeholder so far.
 - Interface changes: `StateMachineConfig` gained `restart_evidence_threshold`,
   `live_confirmed_threshold`, `latched_team_dwell_s`, and `evidence_window_s` (all validated, all documented in

@@ -152,12 +152,10 @@ Rebasing onto that surfaced two real compatibility issues, both fixed:
 
 Verified end to end against the real match (`possession.data.load_match` ->
 `possession.dead_ball.build_priors` -> `possession.state_machine.decode`, with a neutral
-placeholder in place of Beks's not-yet-built `features.py`): runs in ~15s total on all 199,319
-frames, produces a submission that passes `validate_submission.py`, and the `X` count matches the
-documented ungraded-frame count exactly. Scored against the public window purely as a plumbing
-check (never as a result): `spellF1` 0.0952 — far below the baseline, as expected, since without
-real tracking-based team evidence the only team signal available is Smart Tagging's sparse hints.
-This number is not informative about the real approach and should not be read as one.
+placeholder in place of Beks's not-yet-built `features.py`): runs on all 199,319 frames, produces
+a submission that passes `validate_submission.py`, and the `X` count matches the documented
+ungraded-frame count. Also scored against the public window purely as a plumbing check, never as a
+result. Real-match outputs are kept local, per AGENTS.md and RELEASE.md.
 
 ## Decision 6 — exiting a confirmed stop requires proof play resumed, not just quiet
 
@@ -313,10 +311,9 @@ elapsed time, however the supporting frames are distributed within it. Ordinary 
 dwell is untouched: the deque is left untrimmed there, preserving Decision 3's original unbounded
 gap tolerance exactly. Dedicated regression test added for the sparse case.
 
-On the real match (still placeholder tracking features): `D` share rose slightly, 7,514 -> 7,970
-frames — not from team-evidence proximity, which has zero reliability in the placeholder, but
-from Smart Tagging's real `tag_team_evidence`, which can itself be sparse across a long stretch
-and was previously enough to trip the valve without being sustained either.
+A local real-match run (placeholder tracking features, counts kept local) moved `D` in the
+expected direction, via Smart Tagging's `tag_team_evidence`, which can itself be sparse across a
+long stretch and was previously enough to trip the valve without being sustained either.
 
 ### Fifth amendment — confirmed live play cancels a pending stop; all evidence now ages out (2026-11-10)
 
@@ -345,6 +342,121 @@ cleared the latch on the same frame, and proximity alone exited a confirmed stop
 
 Still open (policy, not a bug): confirmed live play with no reliable team stays `D`, which
 conflicts with `D` meaning stopped play. Needs a team decision.
+
+## Decision 7 — tracking-first fusion: tags fill gaps, they are never averaged in (2026-11-11)
+
+The first real-features run (aggregate coverage counts only, run locally) suggested Smart Tagging
+was overruling tracking. Tag team evidence is full certainty for one team at a flat 0.5
+reliability across whole attacking-phase windows, on about half of graded frames. Under the old
+reliability-weighted average, tracking at 0.4 reliability saying `A` inside an `H` tag window
+fused to a decisive `H`. A frame supporting the current state resets a pending turnover, so a
+real turnover inside a stale phase window was actively cancelled. That fits the too-long
+possessions in the same run. It is a mechanism that fits the counts, not a measured cause.
+
+At the same time Beks (E4) found his reliability multiplied in the H/A margin that this decoder
+also thresholds, counting it twice. He proposes dropping it from reliability (his branch
+`e4/reliability-v1`). That makes contested tracking high-reliability with evidence near 0.5,
+which in an average would also dilute tags exactly where they should help.
+
+**Rule:** one source decides each frame.
+
+| Tracking on this frame | Frame's team candidate |
+|---|---|
+| reliability >= `team_reliability_min`, margin decisive | tracking's team |
+| reliability >= floor, margin not decisive (contested) | none: a pending count pauses |
+| reliability below floor | the tag's team, if the tag clears the same floor and margin |
+
+Why contested tracking pauses rather than letting the tag fill: a duel is real information that
+nobody clearly has the ball, and phase tags almost always name the incumbent, so filling it
+would cancel turnovers as they start. Pausing keeps a turnover's accumulated support (Decision 3).
+
+Side effect: two sub-floor sources (e.g. 0.2 + 0.1) no longer add up to a decision, since one
+source must clear the floor on its own. With Beks's current formula the contested case cannot occur:
+his reliability includes the margin, so any frame at or above the 0.25 floor also has margin
+>= 0.25 > 0.15. Duels all fall below the floor and tags still fill them; `team_sources["contested"]`
+stays 0 until his change lands. The pause rule needs both.
+
+Config coupling, added on review: each source must clear the floor alone, and every tag frame
+carries `tagging.team_reliability`, so `decode()` rejects a non-zero tag weight below
+`team_reliability_min` (as it already does for `dead_ball.evidence_weight`).
+
+Not done yet, measure first: tag-only frames can still reset a tracking-based pending turnover
+during an occlusion. If the comparison run shows that, restrict tag-only frames to supporting,
+never resetting. Selection between variants uses synthetic cases and coverage counts, not labels
+or the public window.
+
+## Decision 8 — 1 s team dwell for controlled possession, with backdated boundaries (2026-11-11)
+
+**Evidence.** A local four-way run (counts kept local) of main, E4 #14, this branch's Decision 7
+and both together showed both changes add possessions, most of the added ones short. A
+bounce-back count added to the local smoke script showed most of those short ones snap back to
+the team that had the ball before, and few were won on a near-tie margin (< 0.30). So they are
+brief, clear opposing touches or approaches, not close duels; Decision 7's contested pause
+already handles duels.
+
+**Rule, from the definition, not from the counts.** CHALLENGE.md: a change of possession needs
+*controlled* possession ("a player keeps the ball for a few seconds"); "a simple touch of the ball
+without control", "a deflection of a pass that does not intercept it" and "an aerial duel won
+without subsequent control" do not count. 0.6 s of support is less than that, so `team_dwell_s`
+becomes 1.0 s (25 frames at 25 fps). Fewer short spells afterwards is not evidence for the value:
+a longer dwell removes them by construction.
+
+**Backdating.** A longer dwell is also a longer delay (EVALUATION.md: 1 s late costs about a third
+of spellF1). The definition puts the boundary at "the moment possession passes", i.e. the first
+frame of the new team's control, not the moment we become confident. So when a change is
+confirmed, the frames from its first supporting frame up to confirmation are relabelled. Only
+paused frames or support for that candidate can lie in between (any other candidate restarts the
+count), so nothing else is overwritten. Not applied to the Decision 6 safety valve: team evidence
+alone ending a confirmed stop is too weak to move the stop's end earlier. Not applied to `D`
+either (found on review): its 2-frame dwell costs about one frame, while backdating could relabel
+up to `evidence_window_s` of unobserved play as a stoppage between two stray dead frames.
+
+**Amendment (Beks, PR #13 review): backdating stops at a long gap.** As first written, the boundary
+went to the oldest support still in the 6 s window, so one stray touch, 5 s of nothing, then 24
+frames could relabel 6 s of play. Now it goes back only through the latest support run: a gap
+with no support longer than the dwell (1 s) breaks the run. Cost: a real turnover that spans a
+long occlusion lands at its last run after the occlusion (synthetic 100-frame-gap case: +112
+frames, against +124 with no backdating). So the rule is never later than not backdating at
+all, and never backdates across a single gap longer than one dwell. Short gaps, such as a duel
+with support every few frames, still backdate fully. #16's fixed 0.6 s cap was the alternative;
+under a 1 s dwell it would put every ordinary turnover about 9 frames late. Each transition now
+records `frame` (the boundary) and `confirmed_frame`.
+
+**Effect on the synthetic timing table** (`python -m tests.e2_scenarios`): boundary errors fall
+for team changes from +14 / +15 frames to 0; stops stay +1 (their own dwell), restarts stay +1 (the frame carrying the restart proof has no team);
+a 24-frame possession is now missed where a 14-frame one was. Isken's independent reference model
+backdates too and still agrees on all 5,461 exhaustive and 200 seeded sequences. A local real-match
+rerun (counts kept local, no labels, no score; run before the gap-rule amendment below and not
+rerun since) put the possession count between `main` and
+Decision 7 alone. Fewer short spells there are expected by construction, not evidence for the
+value.
+
+## Decision 9 — two ideas ported from PR #16 (2026-11-11)
+
+PR #16 (Almaz, `e2/possession-refinement`) proposed a second, opt-in decoder with several
+policies. A comparison, confirmed by an independent review that did not know the preferred
+outcome, chose #13 as the basis and ported two of #16's ideas into this single loop. Credit:
+Almaz.
+
+1. **Tag protection.** A frame decided only by a tag cannot cancel a pending turnover while that
+   turnover has tracking support inside `evidence_window_s`; the frame pauses instead. Opposing
+   *tracking* still cancels it, and protection ends when the tracking support ages out. Phase tags
+   span whole attacking windows and usually name the incumbent, so without this a stale tag could
+   block a real turnover indefinitely (Decision 7 left this as "measure first"; the independent
+   review reproduced it). `diagnostics["protected_tracking_frames"]` counts paused tag frames.
+2. **Restart look-ahead.** CHALLENGE.md: "whenever play restarts ... there is a clear possessor".
+   The first team change confirmed after a restart signal (E3 live/restart proof while in `D`)
+   takes the restart frame as its boundary if its support run starts within
+   `restart_lookahead_s` (2.0 s, #16's value) and only that team was seen since. A stop, a half
+   change or leaving `D` cancels it; it only ever moves a boundary earlier (at a half start the
+   kickoff may already be backdated before E3's first live confirmation). Synthetic timing:
+   restarts move from +1 to 0 frames.
+
+Not ported, and why: the 0.32 s strong-tracking fast path (contradicts CHALLENGE.md's controlled
+possession, and its reliability floor predates #14's new reliability meaning); exporting `X` for
+unresolved live play (the scorer fills `X` with the previous label, here `D`, for spellF1, and
+macroF1 counts it as a miss, so it never beats `D`); backdating stops; the fixed 0.6 s backdating
+cap (about 9 frames late under a 1 s dwell); and a second decode path (every fix twice).
 
 ## Explicitly deferred (not forgotten, not yet needed)
 

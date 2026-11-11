@@ -67,17 +67,20 @@ TIMING_CASES = (
     # symbol used to start -- without it, "D"*30+"A"*30 would stay D forever, which is exactly
     # the bug Decision 6 fixes. The expected frame stays at the true moment of restart (where R
     # now sits); the measured delay below grows by 1 frame, the cost of requiring that proof.
+    # Decision 9 (2026-11-11): the restart look-ahead now puts that boundary on the R frame (+0).
     TimingCase("Restart", "D" * 30 + "R" + "A" * 29, ((30, "D", "A"),)),
     TimingCase("Same-team restart", "H" * 30 + "D" * 10 + "R" + "H" * 29,
                ((30, "H", "D"), (40, "D", "H"))),
-    TimingCase("Turnover with 100-frame gap", "H" * 30 + "A" * 7 + "." * 100 + "A" * 8,
+    # Decision 8 (2026-11-11): team dwell is 25 frames and confirmed changes are backdated, so
+    # the gap case needs 25 supporting frames and the short-possession cases sit around 25.
+    TimingCase("Turnover with 100-frame gap", "H" * 30 + "A" * 12 + "." * 100 + "A" * 13,
                ((30, "H", "A"),)),
-    TimingCase("14-frame A possession", "H" * 30 + "A" * 14 + "H" * 30,
-               ((30, "H", "A"), (44, "A", "H"))),
-    TimingCase("15-frame A possession", "H" * 30 + "A" * 15 + "H" * 30,
-               ((30, "H", "A"), (45, "A", "H"))),
-    TimingCase("16-frame A possession", "H" * 30 + "A" * 16 + "H" * 30,
-               ((30, "H", "A"), (46, "A", "H"))),
+    TimingCase("24-frame A possession", "H" * 30 + "A" * 24 + "H" * 30,
+               ((30, "H", "A"), (54, "A", "H"))),
+    TimingCase("25-frame A possession", "H" * 30 + "A" * 25 + "H" * 30,
+               ((30, "H", "A"), (55, "A", "H"))),
+    TimingCase("26-frame A possession", "H" * 30 + "A" * 26 + "H" * 30,
+               ((30, "H", "A"), (56, "A", "H"))),
 )
 
 
@@ -86,8 +89,9 @@ def measure_timing(case):
 
     No time tolerance is used: delays beyond scorer tolerances must remain
     visible. This is a boundary diagnostic, not the official transition score.
-    Causal decoding places final boundaries at confirmation; the two delays are
-    equal. Warm-up is excluded explicitly, rather than counted as a real event.
+    Decision 8 backdates confirmed changes, so this measures the final boundary
+    error; confirmation delay is in diagnostics["transitions"][...]["confirmed_frame"].
+    Warm-up is excluded explicitly, rather than counted as a real event.
     """
     prediction = decode(*evidence_sequence(case.symbols))
     remaining = label_transitions(prediction.labels, start=case.start)

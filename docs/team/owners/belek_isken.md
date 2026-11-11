@@ -1,12 +1,12 @@
 # Belek and Isken — Possession state machine
 
 - Owner: Belek and Isken
-- Status: decoder merged to `main` (PR #6, with Isken's PR #12); Belek on tracking-first fusion
-- Branch: Belek on `e2/tracking-first-fusion`; `e2/state-v1` and `e2/decoder-edge-fixes` are merged
+- Status: decoder with Decisions 7-9 merged to `main` (PR #13, squash-merged); no E2 task active
+- Branch: none active; `e2/tracking-first-fusion` deleted after the squash-merge
 - Reviewer: E4
 - Owned files: possession/state_machine.py; state-machine configuration and tests
 - Current milestone: synthetic decoder validation and E3/export integration
-- Last update: 2026-11-11 (Belek's track, Decision 8)
+- Last update: 2026-11-11 (Belek's track, PR #13 merged)
 
 ## Pair coordination
 
@@ -98,7 +98,7 @@ When E4 features exist, connect them to the synthetic integration slice.
   E4 feature builder, and E5 pipeline integration. Hidden-match improvement is
   not measured; the public answer window was not used.
 
-## Belek's current task: tracking-first fusion (`e2/tracking-first-fusion`)
+## Belek's last task: tracking-first fusion (PR #13, squash-merged)
 
 Decision 7 in the decision doc. Tracking and tag team evidence are no longer averaged: reliable
 tracking decides the frame alone (contested tracking gives no candidate), and tags fill only
@@ -146,8 +146,20 @@ not delay boundaries. Merged `main` (E4 #14, tooling #15) first.
 - Decision 9 (same branch): ported #16's tag protection and restart look-ahead into the single
   loop after comparing #13 and #16 (own comparison plus an independent review, same verdict:
   #13 as basis). Isken's reference model gained the look-ahead and still agrees on all exhaustive
-  and seeded sequences; six new tests. 195/195 pass on Python 3.12.16. Real-match effect not run.
-  Next: Beks re-review, E5 sign-off on `tests/test_pipeline.py`, Almaz to decide on closing #16.
+  and seeded sequences; four new tests (the review's regression case sits inside one of them).
+  195/195 pass on Python 3.12.16, 215/215 merged with `main` (incl. E3 #11); CI green on Ubuntu
+  and Windows.
+- Real-match smoke test re-run locally after the ports (completion status only, counts kept
+  local): `X` count exact; possession count between `main` and Decision 7 alone; tag protection
+  fires. Some possessions under 1 s appear. A synthetic fuzz (not committed) reproduces short
+  possessions only via the gap rule truncating a support run (tag protection confirms more
+  sparse-support turnovers, which then hit it) or the pre-existing safety-valve exit, and found
+  no port bug; the real-match cases are presumed to share these causes, not verified case by
+  case. Open for Beks: when the gap rule truncates, should the latest run alone have to meet
+  the dwell?
+- Next: E5 sign-off on the two `tests/test_pipeline.py` changes and the stale
+  `docs/team/TECHNICAL_DOCUMENT.md:68-78` (post-merge); Almaz to decide on closing #16; team decisions on
+  the second-half start and on asking the organisers about brief touches.
 - Open, outside this change: the second half is graded ~2,934 frames before its kickoff, and
   player proximity at the centre spot reads as possession there (already true before Decision 8,
   now from the half's first frame). Team decision needed: treat each half start like a

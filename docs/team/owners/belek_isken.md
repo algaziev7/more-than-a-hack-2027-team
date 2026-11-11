@@ -179,6 +179,11 @@ sliding evidence window (`evidence_window_s`, 6s). Fifth amendment in the decisi
 PR review raised the same live-play bug, plus overlapping live/dead thresholds letting proximity
 alone exit a stop; config now rejects `live_confirmed_threshold >= dead_threshold`.
 
+A later review (another AI session, reading the code) found that `dead_ball.evidence_weight`
+becomes `dead_reliability`, so a weight below the decoder's `dead_reliability_min` (0.3) silently
+discards every stop. `decode()` now rejects that combination, as it already does for the tagging
+restart hint; disabling E3 (`enabled: false` or weight 0) is still allowed.
+
 Real match, re-run on Python 3.12.16 after both fixes (placeholder features): 14.5s, `X` count
 still exact, 103 transitions, `D` unchanged at 7,970 frames. Unchanged is plausible, not proof:
 with zero team reliability, team evidence comes only from contiguous tagging windows, so neither
@@ -198,9 +203,9 @@ don't treat as fixed constants" framing.
   `tests/e2_scenarios.py`, `tests/test_state_machine_validation.py`, the decision doc.
 - Reference: PR #6 (merged PR #7 into it), plus six follow-up commits for Decision 6 and its
   five amendments, on `e2/state-v1` -- not yet merged to `main`.
-- Verification: `python -m unittest discover -s tests` -- 144/144 pass (132 + 12 new for Decision
-  6 and its amendments) on Python 3.9.6 and on Python 3.12.16 with `requirements-team.lock`
-  (`pip check` clean), macOS arm64. Real-match smoke test re-run after the fifth amendment
+- Verification: `python -m unittest discover -s tests` -- 164/164 pass on Python 3.12.16 with
+  `requirements-team.lock` (`pip check` clean), macOS arm64, after merging `main` (E4 features)
+  and Isken's PR #12. Earlier heads: 144/144 also on Python 3.9.6. Real-match smoke test re-run after the fifth amendment
   (`.local/smoke_real.py`, uncommitted): `X` exact, `D` 7,970 (unchanged).
 - Untested: anything against real E4 features; only a neutral placeholder so far.
 - Interface changes: `StateMachineConfig` gained `restart_evidence_threshold`,

@@ -231,6 +231,16 @@ class StateMachineValidationTests(unittest.TestCase):
             "H" * 30 + "D" + "." * 4 + "R" * 6 + "." * 14 + "D" + "." * 20))
         self.assertEqual(label_transitions(result.labels, start=30), [])
 
+    def test_dead_ball_weight_below_decoder_floor_fails(self):
+        # Review note: evidence_weight becomes dead_reliability, so 0.25 < 0.3 silently disables D.
+        inputs = evidence_sequence("H")
+        with self.assertRaisesRegex(ValueError, "evidence_weight"):
+            decode(*inputs, {"dead_ball": {"evidence_weight": .25}})
+        for ok in ({"evidence_weight": 0.}, {"enabled": False, "evidence_weight": .25},
+                   {"evidence_weight": .3}):
+            with self.subTest(**ok):
+                decode(*inputs, {"dead_ball": ok})
+
     def test_empty_single_and_excluded_frames(self):
         for symbols, half, expected in (("", [], ""), ("H", [1], "D"),
                                         ("HAD", [0, 0, 0], "XXX"),

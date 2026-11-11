@@ -63,6 +63,7 @@ import math
 import numpy as np
 
 from possession.contracts import Prediction
+from possession.dead_ball import DeadBallConfig
 from possession.tagging import TaggingConfig
 
 # Params
@@ -320,6 +321,15 @@ def decode(match, features, priors, config=None) -> Prediction:
             "state_machine.restart_evidence_threshold ({}) must be strictly greater than "
             "tagging.restart_strength ({}), or a bare tag window alone could exit a confirmed "
             "stop".format(settings.restart_evidence_threshold, tagging_restart_strength))
+    # dead_ball copies evidence_weight into dead_reliability, so a weight below this module's
+    # floor would silently discard every stop and live confirmation. Disabling E3 is still fine.
+    dead_ball = _section(config, "dead_ball", DeadBallConfig)
+    if (dead_ball.enabled and 0 < dead_ball.evidence_weight
+            and dead_ball.evidence_weight < settings.dead_reliability_min):
+        raise ValueError(
+            "dead_ball.evidence_weight ({}) is below state_machine.dead_reliability_min ({}), "
+            "so every dead-ball clue would be ignored".format(
+                dead_ball.evidence_weight, settings.dead_reliability_min))
 
     half = np.asarray(match.half)
     _validate_alignment(match, features, priors, half)

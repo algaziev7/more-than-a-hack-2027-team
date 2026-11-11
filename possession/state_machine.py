@@ -318,7 +318,8 @@ def decode(match, features, priors, config=None) -> Prediction:
     # bare dict .get() that would raise the wrong exception type on bad input), so the two can't
     # silently drift back into collision (e.g. someone raising tagging.restart_strength without
     # noticing this coupling).
-    tagging_restart_strength = _section(config, "tagging", TaggingConfig).restart_strength
+    tagging = _section(config, "tagging", TaggingConfig)
+    tagging_restart_strength = tagging.restart_strength
     if settings.restart_evidence_threshold <= tagging_restart_strength:
         raise ValueError(
             "state_machine.restart_evidence_threshold ({}) must be strictly greater than "
@@ -333,6 +334,13 @@ def decode(match, features, priors, config=None) -> Prediction:
             "dead_ball.evidence_weight ({}) is below state_machine.dead_reliability_min ({}), "
             "so every dead-ball clue would be ignored".format(
                 dead_ball.evidence_weight, settings.dead_reliability_min))
+    # Decision 7: each source must clear team_reliability_min alone, and every tag frame carries
+    # tagging.team_reliability, so a lower non-zero weight would silently disable tag evidence.
+    if 0 < tagging.team_reliability < settings.team_reliability_min:
+        raise ValueError(
+            "tagging.team_reliability ({}) is below state_machine.team_reliability_min ({}), "
+            "so tag team evidence would never decide a frame".format(
+                tagging.team_reliability, settings.team_reliability_min))
 
     half = np.asarray(match.half)
     _validate_alignment(match, features, priors, half)

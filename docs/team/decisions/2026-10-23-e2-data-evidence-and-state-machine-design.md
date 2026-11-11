@@ -374,8 +374,14 @@ nobody clearly has the ball, and phase tags almost always name the incumbent, so
 would cancel turnovers as they start. Pausing keeps a turnover's accumulated support (Decision 3).
 
 Side effect: two sub-floor sources (e.g. 0.2 + 0.1) no longer add up to a decision, since one
-source must clear the floor on its own. With Beks's current formula contested frames are mostly
-below the floor, so tags still fill them until his change lands; the full effect needs both.
+source must clear the floor on its own. With Beks's current formula the contested case cannot occur:
+his reliability includes the margin, so any frame at or above the 0.25 floor also has margin
+>= 0.25 > 0.15. Duels all fall below the floor and tags still fill them; `team_sources["contested"]`
+stays 0 until his change lands. The pause rule needs both.
+
+Config coupling, added on review: each source must clear the floor alone, and every tag frame
+carries `tagging.team_reliability`, so `decode()` rejects a non-zero tag weight below
+`team_reliability_min` (as it already does for `dead_ball.evidence_weight`).
 
 Not done yet, measure first: tag-only frames can still reset a tracking-based pending turnover
 during an occlusion. If the comparison run shows that, restrict tag-only frames to supporting,

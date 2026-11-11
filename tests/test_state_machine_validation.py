@@ -249,9 +249,11 @@ class StateMachineValidationTests(unittest.TestCase):
         self.assertEqual(label_transitions(result.labels), [(14, "D", "H"), (44, "H", "A")])
 
     def test_tag_fills_frames_where_tracking_is_below_the_floor(self):
-        for tracking_rel in (0., .1):
+        # Zero reliability must carry neutral evidence (contracts rule); .1 is a weak A reading.
+        for tracking_home, tracking_rel in ((.5, 0.), (.1, .1)):
             with self.subTest(tracking_rel=tracking_rel):
-                result = decode(*self._tracking_and_tags(30, .1, tracking_rel, 1., .5))
+                result = decode(*self._tracking_and_tags(
+                    30, tracking_home, tracking_rel, 1., .5))
                 self.assertEqual(result.labels.tolist(), list("D" * 14 + "H" * 16))
                 self.assertEqual(result.diagnostics["team_sources"],
                                  {"tracking": 0, "contested": 0, "tag": 30})
@@ -260,6 +262,15 @@ class StateMachineValidationTests(unittest.TestCase):
         # Averaging summed reliabilities (.2 + .1 >= .25); one source must clear the floor alone.
         result = decode(*self._tracking_and_tags(30, .9, .2, 1., .1))
         self.assertTrue(np.all(result.labels == "D"))
+
+    def test_tag_weight_below_decoder_floor_fails(self):
+        # Review note: under Decision 7 a non-zero tag weight below the floor disables tags silently.
+        inputs = evidence_sequence("H")
+        with self.assertRaisesRegex(ValueError, "team_reliability"):
+            decode(*inputs, {"tagging": {"team_reliability": .2}})
+        for ok in (0., .25):
+            with self.subTest(team_reliability=ok):
+                decode(*inputs, {"tagging": {"team_reliability": ok}})
 
     def test_live_play_between_stop_clues_does_not_enter_dead(self):
         # Beks's review: isolated stops split by a restart and live play must not combine.

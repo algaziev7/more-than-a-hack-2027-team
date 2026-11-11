@@ -107,9 +107,13 @@ returns `diagnostics["team_sources"]`, graded-frame counts decided by tracking, 
 contested. Paired with Beks's option (c) on `e4/reliability-v1` (reliability without the margin
 factor), agreed by message.
 
+- Review (another AI session, code reading): added a check rejecting a non-zero
+  `tagging.team_reliability` below `team_reliability_min`, which would silently disable tags;
+  fixed an invalid test input (non-neutral evidence at zero reliability). `contested` is always 0
+  with E4's current formula, which already includes the margin in reliability.
 - Tests: four new synthetic tests (contested tracking pauses; decisive tracking turnover beats a
   stale tag; tags fill sub-floor frames; two sub-floor sources no longer combine). They failed
-  on the averaging code first. 184/184 pass on Python 3.12.16 with `requirements-team.lock`.
+  on the averaging code first, plus one config-check test. 185/185 pass on Python 3.12.16 with `requirements-team.lock`.
 - Unmeasured: effect on the real match. Next: run the local four-way comparison (current, Beks's
   (c) only, this branch only, both) with aggregate counts only, then decide whether tag-only
   frames should also stop resetting a tracking-based pending turnover.

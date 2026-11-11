@@ -341,16 +341,18 @@ def decode(match, features, priors, config=None) -> Prediction:
             "dead_ball.evidence_weight ({}) is below state_machine.dead_reliability_min ({}), "
             "so every dead-ball clue would be ignored".format(
                 dead_ball.evidence_weight, settings.dead_reliability_min))
+    half = np.asarray(match.half)
+    _validate_alignment(match, features, priors, half)
     # Decision 7: each source must clear team_reliability_min alone, and every tag frame carries
     # tagging.team_reliability, so a lower non-zero weight would silently disable tag evidence.
-    if 0 < tagging.team_reliability < settings.team_reliability_min:
+    # Only when tag evidence is actually supplied: tracking-only runs (tags disabled or missing)
+    # must not fail on an unused tag weight (Almaz, PR #13).
+    if (np.any(np.asarray(priors.tag_team_reliability) > 0)
+            and 0 < tagging.team_reliability < settings.team_reliability_min):
         raise ValueError(
             "tagging.team_reliability ({}) is below state_machine.team_reliability_min ({}), "
             "so tag team evidence would never decide a frame".format(
                 tagging.team_reliability, settings.team_reliability_min))
-
-    half = np.asarray(match.half)
-    _validate_alignment(match, features, priors, half)
     n = len(half)
 
     candidate, is_dead, exit_dead_ok, sources = _decisive_state_per_frame(

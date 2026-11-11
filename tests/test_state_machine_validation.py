@@ -282,12 +282,22 @@ class StateMachineValidationTests(unittest.TestCase):
 
     def test_tag_weight_below_decoder_floor_fails(self):
         # Review note: under Decision 7 a non-zero tag weight below the floor disables tags silently.
-        inputs = evidence_sequence("H")
+        inputs = self._tracking_and_tags(30, .5, 0., 1., .2)  # tag evidence present
         with self.assertRaisesRegex(ValueError, "team_reliability"):
             decode(*inputs, {"tagging": {"team_reliability": .2}})
         for ok in (0., .25):
             with self.subTest(team_reliability=ok):
                 decode(*inputs, {"tagging": {"team_reliability": ok}})
+
+    def test_tag_weight_check_skips_tracking_only_runs(self):
+        # Almaz, PR #13: with tags disabled or missing, an unused default tag weight (0.5) below
+        # a raised decoder floor must not reject a valid tracking-only run.
+        config = {"data": {"load_tags": False}, "state_machine": {"team_reliability_min": .75}}
+        result = decode(*self._tracking_and_tags(30, .95, .9, .5, 0.), config)
+        self.assertEqual(result.labels.tolist(), list("H" * 30))
+        # The same floor still rejects the weight once tag evidence is actually supplied.
+        with self.assertRaisesRegex(ValueError, "team_reliability"):
+            decode(*self._tracking_and_tags(30, .95, .9, 1., .5), config)
 
     # Decision 8: confirmed changes are backdated to their first supporting frame.
     def test_backdating_spans_paused_frames_and_never_overwrites_other_support(self):

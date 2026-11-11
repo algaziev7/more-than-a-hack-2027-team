@@ -135,6 +135,9 @@ not delay boundaries. Merged `main` (E4 #14, tooling #15) first.
   Timing-dependent tests now assert `confirmed_frame`; tests with 15-frame assumptions were
   re-derived for 25. Two E5 pipeline tests (`tests/test_pipeline.py`) updated for the new
   boundaries, flagged for Goblin/Azamat. 190/190 pass on Python 3.12.16.
+- Almaz's PR #13 review: the tag-weight check rejected valid tracking-only runs (tags disabled,
+  raised `team_reliability_min`). It now applies only when tag evidence is actually supplied.
+  191/191 pass.
 - Open, outside this change: the second half is graded ~2,934 frames before its kickoff, and
   player proximity at the centre spot reads as possession there (already true before Decision 8,
   now from the half's first frame). Team decision needed: treat each half start like a

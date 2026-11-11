@@ -431,6 +431,33 @@ rerun since) put the possession count between `main` and
 Decision 7 alone. Fewer short spells there are expected by construction, not evidence for the
 value.
 
+## Decision 9 — two ideas ported from PR #16 (2026-11-11)
+
+PR #16 (Almaz, `e2/possession-refinement`) proposed a second, opt-in decoder with several
+policies. A comparison, confirmed by an independent review that did not know the preferred
+outcome, chose #13 as the basis and ported two of #16's ideas into this single loop. Credit:
+Almaz.
+
+1. **Tag protection.** A frame decided only by a tag cannot cancel a pending turnover while that
+   turnover has tracking support inside `evidence_window_s`; the frame pauses instead. Opposing
+   *tracking* still cancels it, and protection ends when the tracking support ages out. Phase tags
+   span whole attacking windows and usually name the incumbent, so without this a stale tag could
+   block a real turnover indefinitely (Decision 7 left this as "measure first"; the independent
+   review reproduced it). `diagnostics["protected_tracking_frames"]` counts paused tag frames.
+2. **Restart look-ahead.** CHALLENGE.md: "whenever play restarts ... there is a clear possessor".
+   The first team change confirmed after a restart signal (E3 live/restart proof while in `D`)
+   takes the restart frame as its boundary if its support run starts within
+   `restart_lookahead_s` (2.0 s, #16's value) and only that team was seen since. A stop, a half
+   change or leaving `D` cancels it; it only ever moves a boundary earlier (at a half start the
+   kickoff may already be backdated before E3's first live confirmation). Synthetic timing:
+   restarts move from +1 to 0 frames.
+
+Not ported, and why: the 0.32 s strong-tracking fast path (contradicts CHALLENGE.md's controlled
+possession, and its reliability floor predates #14's new reliability meaning); exporting `X` for
+unresolved live play (the scorer fills `X` with the previous label, here `D`, for spellF1, and
+macroF1 counts it as a miss, so it never beats `D`); backdating stops; the fixed 0.6 s backdating
+cap (about 9 frames late under a 1 s dwell); and a second decode path (every fix twice).
+
 ## Explicitly deferred (not forgotten, not yet needed)
 
 - No vectorization of the per-frame loop — 199k frames is cheap in plain Python; confirmed at

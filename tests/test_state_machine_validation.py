@@ -21,7 +21,8 @@ from possession.state_machine import decode
 from tests.e2_scenarios import TIMING_CASES, evidence_sequence, label_transitions, measure_timing
 
 
-def grouped_reference(symbols, half, team_required, dead_required, latched_required=None):
+def grouped_reference(symbols, half, team_required, dead_required, latched_required=None,
+                      lookahead=0):
     """Independent re-derivation of the decode() policy from its prose description.
 
     Through 2026-11-08 this was a purely declarative "group runs, check each run's own length,
@@ -56,6 +57,10 @@ def grouped_reference(symbols, half, team_required, dead_required, latched_requi
     Decision 8 (2026-11-11): a confirmed team change is backdated to the start of its latest
     support run (a gap longer than team_required breaks it), except the latched safety valve; D
     is never backdated.
+
+    Decision 9 (2026-11-11, ported from PR #16): the first team change after an R while in D is
+    moved back to that R when its run starts within `lookahead` symbols and no other team symbol
+    came in between; a D symbol, a half change or leaving D clears it. 0 disables it.
     """
     if latched_required is None:
         latched_required = team_required
@@ -66,6 +71,7 @@ def grouped_reference(symbols, half, team_required, dead_required, latched_requi
             continue
         state, dead_confirmed = "D", False
         pending_symbol, pending_count, last_support = None, 0, None
+        restart_at, restart_teams = None, set()
         for i in indices:
             symbol = symbols[i]
             if symbol == "D":
@@ -80,6 +86,12 @@ def grouped_reference(symbols, half, team_required, dead_required, latched_requi
                     pending_symbol, pending_count = None, 0
             if symbol == "R" and pending_symbol == "D":
                 pending_symbol, pending_count = None, 0
+            if symbol == "D":
+                restart_at = None
+            elif symbol == "R" and state == "D" and restart_at is None:
+                restart_at, restart_teams = i, set()
+            elif symbol in "HA" and restart_at is not None:
+                restart_teams.add(symbol)
 
             candidate = symbol if symbol in "HAD" else None
             if candidate is None:
@@ -109,10 +121,14 @@ def grouped_reference(symbols, half, team_required, dead_required, latched_requi
                 # Decision 8: backdate a team change to the run's first supporting symbol (never
                 # D, never the latched safety valve). Only paused symbols lie between.
                 if backdate:
+                    if (restart_at is not None and 0 < pending_start - restart_at <= lookahead
+                            and restart_teams <= {candidate}):
+                        pending_start = restart_at
                     labels[pending_start:i] = [candidate] * (i - pending_start)
                 if state == "D" and candidate != "D":
                     # Leaving D: don't carry a stale latch into the live period that follows.
                     dead_confirmed = False
+                    restart_at = None
                 state = candidate
                 pending_symbol, pending_count = None, 0
             labels[i] = state
@@ -335,6 +351,61 @@ class StateMachineValidationTests(unittest.TestCase):
                          (114, 114, "H"))
         self.assertTrue(np.all(result.labels[31:114] == "D"))
 
+    # Decision 9 (ported from PR #16): tag protection and restart look-ahead.
+    def _stale_tag_turnover(self, n_after):
+        # H by tracking, then A tracking every 3rd frame with an H phase tag on the frames between.
+        match, features, priors = evidence_sequence("H" * 30 + "." * n_after)
+        for i in range(30, 30 + n_after):
+            if i % 3 == 0:
+                features.team_evidence[i], features.team_reliability[i] = (.05, .95), .9
+            else:
+                priors.tag_team_evidence[i], priors.tag_team_reliability[i] = (1., 0.), .5
+        return match, features, priors
+
+    def test_stale_tag_cannot_cancel_a_tracking_turnover(self):
+        result = decode(*self._stale_tag_turnover(90))
+        self.assertEqual(label_transitions(result.labels, start=30), [(30, "H", "A")])
+        self.assertGreater(result.diagnostics["protected_tracking_frames"], 0)
+
+    def test_opposing_tracking_still_cancels_a_pending_turnover(self):
+        match, features, priors = self._stale_tag_turnover(90)
+        features.team_evidence[60], features.team_reliability[60] = (.95, .05), .9  # real H
+        priors.tag_team_reliability[60] = 0.
+        result = decode(match, features, priors)
+        # A support before 60 is discarded; the 20 A frames after it are under the 25-frame dwell.
+        self.assertEqual(label_transitions(result.labels, start=30), [])
+
+    def test_tag_protection_expires_with_the_evidence_window(self):
+        match, features, priors = evidence_sequence("H" * 30 + "A" * 5 + "." * 200 + "A" * 20)
+        priors.tag_team_evidence[35:235] = (1., 0.)  # H phase tag after 5 A tracking frames
+        priors.tag_team_reliability[35:235] = .5
+        result = decode(match, features, priors)
+        # Once the 5 A frames are older than evidence_window_s, the H tag cancels them again, so
+        # 20 later A frames alone are under the dwell: no turnover.
+        self.assertEqual(label_transitions(result.labels, start=30), [])
+        self.assertEqual(result.diagnostics["protected_tracking_frames"], 150)
+
+    def test_restart_lookahead_puts_the_boundary_on_the_restart_frame(self):
+        for gap, boundary in ((20, 30), (49, 30), (50, 81)):
+            with self.subTest(gap=gap):
+                result = decode(*evidence_sequence("D" * 30 + "R" + "." * gap + "H" * 25))
+                self.assertEqual(label_transitions(result.labels), [(boundary, "D", "H")])
+        # Another team seen in between cancels the look-ahead: the boundary stays at the H run.
+        result = decode(*evidence_sequence("D" * 30 + "R" + "." * 5 + "AAA" + "." * 5 + "H" * 25))
+        self.assertEqual(label_transitions(result.labels), [(44, "D", "H")])
+        # A new stop in between clears it and re-arms the latch: H alone needs fresh proof.
+        result = decode(*evidence_sequence("D" * 30 + "R" + "." * 5 + "DD" + "." * 5 + "H" * 25))
+        self.assertTrue(np.all(result.labels == "D"))
+        # Pre-commit review: a stray H right after the restart protects the A tags that follow;
+        # those protected A votes still count as "another team seen", so no look-ahead jump.
+        match, features, priors = evidence_sequence("D" * 30 + "R" + "H" + "." * 28 + "H" * 25)
+        priors.tag_team_evidence[32:41], priors.tag_team_reliability[32:41] = (0., 1.), .5
+        result = decode(match, features, priors)
+        self.assertGreater(result.diagnostics["protected_tracking_frames"], 0)
+        self.assertEqual(label_transitions(result.labels), [(60, "D", "H")])
+        with self.assertRaisesRegex(ValueError, "restart_lookahead_s"):
+            decode(*evidence_sequence("H"), {"state_machine": {"restart_lookahead_s": -.1}})
+
     def test_live_play_between_stop_clues_does_not_enter_dead(self):
         # Beks's review: isolated stops split by a restart and live play must not combine.
         result = decode(*evidence_sequence(
@@ -394,10 +465,15 @@ class StateMachineValidationTests(unittest.TestCase):
         self.assertEqual(label_transitions(result.labels, start=30), [(55, "H", "A")])
 
     def test_unknown_team_restart_does_not_guess_team_current_policy(self):
+        # Decision 9: within restart_lookahead_s (50 frames) of the restart signal at 40, the
+        # first team to take over owns the restart; beyond it, no team is guessed.
         result = decode(*evidence_sequence("H" * 30 + "D" * 10 + "R" * 50 + "A" * 25))
-        self.assertTrue(np.all(result.labels[31:90] == "D"))
         self.assertEqual(label_transitions(result.labels, start=30),
-                         [(31, "H", "D"), (90, "D", "A")])
+                         [(31, "H", "D"), (40, "D", "A")])
+        result = decode(*evidence_sequence("H" * 30 + "D" * 10 + "R" * 51 + "A" * 25))
+        self.assertTrue(np.all(result.labels[31:91] == "D"))
+        self.assertEqual(label_transitions(result.labels, start=30),
+                         [(31, "H", "D"), (91, "D", "A")])
 
     def test_half_reset_discards_pending_and_confirmed_state(self):
         for gap in (0, 5):
@@ -422,12 +498,12 @@ class StateMachineValidationTests(unittest.TestCase):
         # Decision 6 (2026-11-09): Restart and Same-team restart now carry +1 frame extra delay --
         # the cost of requiring the inserted "R" (restart proof) before team evidence counts.
         # Decision 8 (2026-11-11): team changes are backdated to their first supporting frame;
-        # stops keep their 2-frame dwell (+1); restarts stay +1, the restart-proof frame has no team.
+        # stops keep their 2-frame dwell (+1); restarts land on the restart frame (Decision 9).
         # The 100-frame occlusion breaks the support run, so that turnover lands at its last run
         # (+112), still earlier than unbacked confirmation (+124): the cost of not reaching back
         # to a stray touch across a long gap (Beks, PR #13).
-        expected = (([0], 0, 0), ([1], 0, 0), ([1], 0, 0),
-                    ([1, 1], 0, 0), ([112], 0, 0), ([], 2, 0),
+        expected = (([0], 0, 0), ([1], 0, 0), ([0], 0, 0),
+                    ([1, 0], 0, 0), ([112], 0, 0), ([], 2, 0),
                     ([0, 0], 0, 0), ([0, 0], 0, 0))
         for case, wanted in zip(TIMING_CASES, expected):
             with self.subTest(case=case.name):
@@ -448,7 +524,8 @@ class StateMachineValidationTests(unittest.TestCase):
         for length in range(7):
             for symbols in product("HAD.", repeat=length):
                 result = decode(*evidence_sequence(symbols), config)
-                expected = grouped_reference(symbols, [1] * length, 3, 2, latched_required=75)
+                expected = grouped_reference(symbols, [1] * length, 3, 2, latched_required=75,
+                                             lookahead=50)
                 self.assertEqual(result.labels.tolist(), expected, "".join(symbols))
 
     def test_seeded_half_sequences_against_reference(self):
@@ -458,7 +535,7 @@ class StateMachineValidationTests(unittest.TestCase):
             symbols = rng.choice(list("HAD.R"), 80).tolist()
             half = [1] * 35 + [0] * 5 + [2] * 40
             result = decode(*evidence_sequence(symbols, half=half), config)
-            expected = grouped_reference(symbols, half, 3, 2, latched_required=75)
+            expected = grouped_reference(symbols, half, 3, 2, latched_required=75, lookahead=50)
             self.assertEqual(result.labels.tolist(), expected, sample)
 
     def test_team_swap_symmetry_with_conflicting_geometry_and_tags(self):

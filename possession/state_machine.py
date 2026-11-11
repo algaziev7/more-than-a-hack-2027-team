@@ -57,8 +57,12 @@ docs/team/decisions/2026-10-23-e2-data-evidence-and-state-machine-design.md. Sum
 - Decision 8: a team change needs `team_dwell_s` = 1.0 s of support, because CHALLENGE.md
   requires *controlled* possession, not a touch or deflection. The dwell decides whether a team
   change happened; the boundary is then backdated to the start of its latest support run (a gap
-  longer than the dwell breaks a run; not for D, and
-  not for the Decision 6 safety valve). Each transition records `frame` (boundary) and `confirmed_frame`.
+  longer than the dwell breaks a run; not for D, and not for the Decision 6 safety valve). Each
+  transition records `frame` (boundary) and `confirmed_frame`.
+- Decision 9 (ported from Almaz's PR #16): a frame decided only by a tag cannot cancel a pending
+  turnover while it has tracking support inside `evidence_window_s`; and the first team change
+  after a restart signal takes the restart frame as its boundary when its support starts within
+  `restart_lookahead_s` and no stop or other team came between.
 
 `config` follows the same convention as `dead_ball.DeadBallConfig` / `tagging.TaggingConfig`: the
 caller passes the *whole* shared pipeline dict, and this module reads only its own
@@ -139,6 +143,11 @@ class StateMachineConfig:
     # gap mid-turnover still works) without letting a touch from 40s ago combine with one now.
     evidence_window_s: float = 6.0   # ~150 frames
 
+    # Ported from #16 (Almaz): the first team change after a restart signal gets its boundary on
+    # the restart frame when its support starts within this long and nothing conflicts between.
+    # CHALLENGE.md: "whenever play restarts ... there is a clear possessor". Decision 9.
+    restart_lookahead_s: float = 2.0  # ~50 frames
+
     def __post_init__(self):
         for field_ in fields(self):
             value = getattr(self, field_.name)
@@ -150,6 +159,8 @@ class StateMachineConfig:
             raise ValueError("dwell durations must be positive")
         if self.latched_team_dwell_s <= self.team_dwell_s:
             raise ValueError("state_machine.latched_team_dwell_s must exceed team_dwell_s")
+        if self.restart_lookahead_s < 0:
+            raise ValueError("state_machine.restart_lookahead_s must be nonnegative")
         if self.evidence_window_s < max(self.dead_dwell_s, self.team_dwell_s):
             raise ValueError("state_machine.evidence_window_s must be at least every dwell")
         for name in ("dead_threshold", "dead_reliability_min", "restart_weight",
@@ -177,6 +188,10 @@ class StateMachineConfig:
     @property
     def evidence_window_frames(self) -> int:
         return max(1, math.ceil(self.evidence_window_s * self.fps))
+
+    @property
+    def restart_lookahead_frames(self) -> int:
+        return math.ceil(self.restart_lookahead_s * self.fps)
 
 
 def _section(config, name, cls):
@@ -372,6 +387,12 @@ def decode(match, features, priors, config=None) -> Prediction:
     # or a brief restart confirmation is remembered rather than needing to coincide with the exact
     # frame team evidence is trying to act on.
     dead_confirmed = False
+    # Decision 9, tag protection: latest tracking frame supporting pending_state. It goes stale by
+    # itself: any reset starts a new pending run after it, and window trimming moves past it.
+    last_tracking, protected = None, 0
+    # Decision 9, restart look-ahead: first restart signal while in D, and the team candidates
+    # seen since. A stop, a half change or leaving D clears it.
+    restart_at, restart_teams = None, set()
 
     for i in range(n):
         this_half = int(half[i])
@@ -387,10 +408,12 @@ def decode(match, features, priors, config=None) -> Prediction:
             current_state = D
             pending_state, pending_frames = None, deque()
             dead_confirmed = False
+            restart_at = None
         previous_half = this_half
 
         if is_dead[i]:
             dead_confirmed = True
+            restart_at = None
         elif exit_dead_ok[i] and pending_state == D:
             # Confirmed live play invalidates pending stop evidence: two isolated stop frames
             # separated by live play are not one stop. Keeps the current H/A label as-is.
@@ -412,8 +435,22 @@ def decode(match, features, priors, config=None) -> Prediction:
                 # no reason. A pending D-candidate is never touched here either way -- entering D
                 # was never gated by this latch, only leaving it.
                 pending_state, pending_frames = None, deque()
+        if exit_dead_ok[i] and current_state == D and restart_at is None:
+            restart_at, restart_teams = i, set()
 
         this_candidate = candidate[i]
+        # Record every team vote since the restart before protection can hide it: a protected
+        # tag still means another team was seen, so the look-ahead must not jump over it.
+        if this_candidate in (H, A) and restart_at is not None:
+            restart_teams.add(this_candidate)
+        # Decision 9: a coarse phase tag usually names the incumbent; it must not erase fresh
+        # tracking support for a pending turnover. Opposing *tracking* still cancels it.
+        if (this_candidate is not None and sources["tag"][i] and pending_state in (H, A)
+                and this_candidate != pending_state and last_tracking is not None
+                and pending_frames and last_tracking >= pending_frames[0]
+                and i - last_tracking <= settings.evidence_window_frames):
+            this_candidate = None
+            protected += 1
         if this_candidate is None:
             # Decision 3: no decisive signal this frame -- pause the count, don't reset it. The
             # ball is missing on 41% of graded frames, in clusters; resetting here would make a
@@ -430,6 +467,8 @@ def decode(match, features, priors, config=None) -> Prediction:
             pending_frames.append(i)
         else:
             pending_state, pending_frames = this_candidate, deque([i])
+        if sources["tracking"][i]:
+            last_tracking = i
 
         gated = this_candidate in (H, A) and current_state == D and dead_confirmed
         # Ordinary dwell: bounded evidence age (evidence_window_s), still tolerant of occlusions.
@@ -475,6 +514,12 @@ def decode(match, features, priors, config=None) -> Prediction:
                     if start - earlier > settings.team_dwell_frames:
                         break
                     start = earlier
+                # Decision 9: only this team seen since the restart signal, within the window.
+                # Only ever earlier: a half-start kickoff may already be backdated before it.
+                if (restart_at is not None
+                        and 0 < start - restart_at <= settings.restart_lookahead_frames
+                        and restart_teams <= {this_candidate}):
+                    start = restart_at
             labels[start:i] = this_candidate
             transitions.append({
                 "frame": int(match.frame[start]) if hasattr(match, "frame") else start,
@@ -489,6 +534,7 @@ def decode(match, features, priors, config=None) -> Prediction:
                 # would still see dead_confirmed True from here and could wipe an unrelated,
                 # never-gated turnover's progress, same failure mode as the guard just above.
                 dead_confirmed = False
+                restart_at = None
             current_state = this_candidate
             pending_state, pending_frames = None, deque()
 
@@ -497,4 +543,5 @@ def decode(match, features, priors, config=None) -> Prediction:
     graded = half > 0
     team_sources = {name: int(np.count_nonzero(mask & graded)) for name, mask in sources.items()}
     return Prediction(labels=labels, diagnostics={"transitions": transitions,
-                                                  "team_sources": team_sources})
+                                                  "team_sources": team_sources,
+                                                  "protected_tracking_frames": protected})

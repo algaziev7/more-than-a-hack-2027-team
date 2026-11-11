@@ -143,6 +143,11 @@ not delay boundaries. Merged `main` (E4 #14, tooling #15) first.
 - Almaz's PR #13 review: the tag-weight check rejected valid tracking-only runs (tags disabled,
   raised `team_reliability_min`). It now applies only when tag evidence is actually supplied.
   191/191 pass.
+- Decision 9 (same branch): ported #16's tag protection and restart look-ahead into the single
+  loop after comparing #13 and #16 (own comparison plus an independent review, same verdict:
+  #13 as basis). Isken's reference model gained the look-ahead and still agrees on all exhaustive
+  and seeded sequences; six new tests. 195/195 pass on Python 3.12.16. Real-match effect not run.
+  Next: Beks re-review, E5 sign-off on `tests/test_pipeline.py`, Almaz to decide on closing #16.
 - Open, outside this change: the second half is graded ~2,934 frames before its kickoff, and
   player proximity at the centre spot reads as possession there (already true before Decision 8,
   now from the half's first frame). Team decision needed: treat each half start like a

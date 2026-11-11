@@ -67,6 +67,7 @@ TIMING_CASES = (
     # symbol used to start -- without it, "D"*30+"A"*30 would stay D forever, which is exactly
     # the bug Decision 6 fixes. The expected frame stays at the true moment of restart (where R
     # now sits); the measured delay below grows by 1 frame, the cost of requiring that proof.
+    # Decision 9 (2026-11-11): the restart look-ahead now puts that boundary on the R frame (+0).
     TimingCase("Restart", "D" * 30 + "R" + "A" * 29, ((30, "D", "A"),)),
     TimingCase("Same-team restart", "H" * 30 + "D" * 10 + "R" + "H" * 29,
                ((30, "H", "D"), (40, "D", "H"))),

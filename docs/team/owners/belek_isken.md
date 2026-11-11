@@ -142,7 +142,23 @@ not delay boundaries. Merged `main` (E4 #14, tooling #15) first.
   player proximity at the centre spot reads as possession there (already true before Decision 8,
   now from the half's first frame). Team decision needed: treat each half start like a
   confirmed stop?
-- Unmeasured: real-match effect. Next: rerun the local comparison (main vs this branch).
+- Measured locally (aggregate counts only, Python 3.12.16, `.local/compare_variants.sh`), all
+  three with the `X` count exact:
+
+  | Variant | Possessions | Median | <1s | <2s (bounce-backs) | <5s (bounce-backs) | D frames / spells |
+  |---|---|---|---|---|---|---|
+  | `main` (with E4 #14) | 186 | 15.1s | 7 | 21 (14) | 52 (42) | 3,542 / 22 |
+  | #13 Decision 7 + #14 | 383 | 6.1s | 49 | 108 (98) | 181 (167) | 3,544 / 22 |
+  | #13 with Decision 8 | 251 | 11.6s | 0 | 31 (27) | 87 (76) | 3,404 / 20 |
+
+  Observations, not evidence for the 1 s value (which rests on CHALLENGE.md's definition,
+  Decision 8): the drop in short spells and bounce-backs is expected by construction. Count and
+  median sit between `main` and Decision 7 alone, so the longer dwell did not remove all the
+  turnovers Decision 7 unlocked; whether those are real cannot be told without labels. Evidence
+  coverage printed identically for both #13 variants (tracking 29.3%, contested 1.6%, tag 32.0%
+  of graded frames), as expected: Decision 8 changes confirmation and timing only. Fewer D frames
+  and spells are explainable (restarts backdated; a stop, short spell, stop sequence now merges)
+  but not verified. Not a score: no labels were used. Merging is a team decision.
 
 ## Belek's track (`e2/state-v1`, merged)
 

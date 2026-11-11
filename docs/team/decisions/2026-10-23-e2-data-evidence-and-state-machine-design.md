@@ -418,8 +418,10 @@ records `frame` (the boundary) and `confirmed_frame`.
 **Effect on the synthetic timing table** (`python -m tests.e2_scenarios`): boundary errors fall
 for team changes from +14 / +15 frames to 0; stops stay +1 (their own dwell), restarts stay +1 (the frame carrying the restart proof has no team);
 a 24-frame possession is now missed where a 14-frame one was. Isken's independent reference model
-backdates too and still agrees on all 5,461 exhaustive and 200 seeded sequences. Real-match effect
-not measured yet: rerun the comparison.
+backdates too and still agrees on all 5,461 exhaustive and 200 seeded sequences. Local real-match
+rerun (aggregate counts, no labels, no score) in `owners/belek_isken.md`: 251 possessions
+against 383 for Decision 7 alone and 186 on `main`. Fewer short spells there are expected by
+construction, not evidence for the value.
 
 ## Explicitly deferred (not forgotten, not yet needed)
 

@@ -11,8 +11,9 @@ import numpy as np
 from possession.contracts import FeatureData, MatchData, PriorData
 from possession.dead_ball import (
     CONFIRMED_RESTART, LIVE_MOTION, STOP_OUTSIDE_AND_STILL, STOP_TAG_AND_STILL,
-    UNUSABLE_BALL, DeadBallConfig, build_priors,
+    UNUSABLE_BALL, DeadBallConfig, build_priors, summarize_prior_diagnostics,
 )
+from possession.features import build_features
 from possession.tagging import UNKNOWN_TEAM, build_tagging_priors
 
 
@@ -338,6 +339,215 @@ class DeadBallTests(unittest.TestCase):
         self.assertIsInstance(priors, PriorData)
         self.assertEqual(priors.tag_team_evidence.shape, (199319, 2))
         assert_neutral(priors)
+
+
+class MissingGapTests(unittest.TestCase):
+    config = {"dead_ball": {"max_missing_gap_s": .2}}
+
+    @staticmethod
+    def missing(match, frames):
+        match.ball_xy_m[frames] = np.nan
+        match.ball_observed[frames] = False
+        match.ball_speed_mps[frames] = np.nan
+
+    def test_short_gap_preserves_support_but_contributes_no_evidence(self):
+        match = match_input(tagged=True)
+        self.missing(match, [3, 4])
+        prior = build_priors(match, config=self.config)
+        assert_neutral(prior, slice(0, 7))
+        self.assertEqual(prior.dead_evidence[7], .9)  # Six observed candidates.
+        assert_neutral(build_priors(match), slice(0, 10))
+
+    def test_repeated_short_gaps_cannot_bank_unbounded_support(self):
+        match = match_input(n=30, tagged=True)
+        self.missing(match, list(range(1, 30, 2)))
+        assert_neutral(build_priors(match, config=self.config))
+
+    def test_confirmed_stop_survives_repeated_isolated_gaps(self):
+        match = match_input(n=120, tagged=True)
+        self.missing(match, list(range(10, 120, 10)))
+        prior = build_priors(match, config=self.config)
+        expected_stop = match.ball_observed & (match.frame >= 5)
+        np.testing.assert_array_equal(prior.dead_evidence > .5, expected_stop)
+        assert_neutral(prior, ~match.ball_observed)
+        report = summarize_prior_diagnostics(match, config=self.config)
+        self.assertEqual(report["frame_counts"]["confirmed_stop_frames"], 104)
+        self.assertEqual(report["event_counts"]["confirmed_stop_runs"], 1)
+
+    def test_restart_survives_repeated_gaps_in_confirmed_stop(self):
+        match = match_input(n=40, tagged=True)
+        self.missing(match, [10, 20, 30])
+        match.ball_xy_m[31:, 0] += np.arange(1, 10) * .3
+        match.ball_speed_mps[31:] = 3.
+        prior = build_priors(match, config=self.config)
+        np.testing.assert_array_equal(
+            np.flatnonzero(prior.diagnostic_flags & CONFIRMED_RESTART), [32])
+        report = summarize_prior_diagnostics(match, config=self.config)
+        self.assertEqual(report["event_counts"]["confirmed_stop_runs"], 1)
+        self.assertEqual(report["event_counts"]["stop_contexts_followed_by_confirmed_live"], 1)
+
+    def test_confirmation_clears_pending_missing_budget(self):
+        match = match_input(n=15, tagged=True)
+        self.missing(match, [3, 4, 8, 9])
+        prior = build_priors(match, config=self.config)
+        # The pending run spends its whole budget, then confirms at frame 7.
+        np.testing.assert_array_equal(
+            np.flatnonzero(prior.dead_evidence > .5), [7, 10, 11, 12, 13, 14])
+        assert_neutral(prior, ~match.ball_observed)
+
+    def test_long_gap_resets_pending_and_confirmed_context(self):
+        match = motion_after_stop()
+        self.missing(match, [6, 7, 8])
+        prior = build_priors(match, config=self.config)
+        assert_neutral(prior, slice(6, None))
+        self.assertFalse(np.any(prior.diagnostic_flags & CONFIRMED_RESTART))
+
+    def test_short_gap_allows_one_restart_after_fresh_motion_confirmation(self):
+        match = motion_after_stop()
+        self.missing(match, [6])
+        prior = build_priors(match, config=self.config)
+        assert_neutral(prior, slice(6, 8))
+        np.testing.assert_array_equal(np.flatnonzero(prior.diagnostic_flags & CONFIRMED_RESTART), [8])
+
+    def test_missing_ball_alone_never_confirms_stop(self):
+        match = match_input(tagged=True)
+        self.missing(match, list(range(2, 12)))
+        assert_neutral(build_priors(match, config=self.config))
+
+    def test_relocated_still_ball_does_not_join_old_stop_support(self):
+        match = match_input(tagged=True)
+        self.missing(match, [3])
+        match.ball_xy_m[4:, 0] += 2.
+        prior = build_priors(match, config=self.config)
+        assert_neutral(prior, slice(0, 9))
+        self.assertEqual(prior.dead_evidence[9], .9)
+
+    def test_rejected_observed_ball_is_not_treated_as_occlusion(self):
+        match = match_input(tagged=True)
+        match.ball_speed_mps[3] = 100.
+        prior = build_priors(match, config=self.config)
+        assert_neutral(prior, slice(0, 9))
+        self.assertEqual(prior.dead_evidence[9], .9)
+
+    def test_half_boundary_discards_retained_stop(self):
+        match = motion_after_stop()
+        self.missing(match, [6])
+        match.half[7:] = 2
+        assert_neutral(build_priors(match, config=self.config), slice(6, None))
+
+    def test_gap_budget_uses_fps_and_never_rounds_up(self):
+        for fps in (10., 25., 50.):
+            match = match_input(n=80, fps=fps, tagged=True)
+            budget = math.floor(.2 * fps)
+            self.missing(match, list(range(2, 2 + budget)))
+            first = math.ceil(.6 * fps) + budget - 1
+            prior = build_priors(match, config=self.config)
+            assert_neutral(prior, slice(0, first))
+            self.assertEqual(prior.dead_evidence[first], .9)
+        match = match_input(tagged=True)
+        self.missing(match, [3])
+        prior = build_priors(match, config={"dead_ball": {"max_missing_gap_s": .09}})
+        np.testing.assert_array_equal(prior.dead_evidence, build_priors(match).dead_evidence)
+
+    def test_budget_validation_and_diagnostic_partition(self):
+        for value in (-.1, .7, True, float("nan")):
+            with self.assertRaises(ValueError):
+                DeadBallConfig(max_missing_gap_s=value)
+        match = match_input(tagged=True)
+        self.missing(match, [3, 4])
+        report = summarize_prior_diagnostics(match, build_features(match), self.config)
+        self.assertEqual(report["frame_counts"]["confirmed_stop_frames"], 5)
+        self.assertEqual(report["event_counts"]["confirmed_stop_runs"], 1)
+        self.assertEqual(report["event_counts"]["pending_stop_runs_reset_by_unusable_ball"], 0)
+        self.assertEqual(report["without_control_comparison"]["changed_stop_frames"], 0)
+
+
+class PriorDiagnosticsTests(unittest.TestCase):
+    def test_attrition_partition_and_common_denominator(self):
+        match = match_input(tagged=True)
+        report = summarize_prior_diagnostics(match)
+        counts = report["frame_counts"]
+        self.assertEqual(counts["graded_frames"], 12)
+        self.assertEqual(counts["ball_usable_frames"], 12)
+        self.assertEqual(counts["confirmed_stop_frames"], 7)
+        self.assertEqual(counts["usable_without_confirmed_stop_frames"], 5)
+        self.assertEqual(counts["stop_candidate_below_dwell_frames"], 5)
+        self.assertEqual(report["event_counts"]["confirmed_stop_runs"], 1)
+        self.assertEqual(report["graded_frame_shares"]["confirmed_stop_frames"], 7 / 12)
+        self.assertEqual(counts["ball_usable_frames"], sum(counts[name] for name in (
+            "usable_not_still_frames", "still_without_stop_context_frames",
+            "stop_candidate_below_dwell_frames", "confirmed_stop_frames")))
+
+    def test_missing_and_rejected_observations_reset_incomplete_runs(self):
+        match = match_input(tagged=True)
+        match.ball_xy_m[3] = np.nan
+        match.ball_observed[3] = False
+        match.ball_speed_mps[3] = np.nan
+        match.ball_speed_mps[7] = 100.
+        report = summarize_prior_diagnostics(match)
+        counts = report["frame_counts"]
+        self.assertEqual(counts["ball_missing_frames"], 1)
+        self.assertEqual(counts["ball_observed_unusable_frames"], 1)
+        self.assertEqual(counts["confirmed_stop_frames"], 0)
+        self.assertEqual(report["event_counts"]["pending_stop_runs_reset_by_unusable_ball"], 2)
+        self.assertEqual(counts["ball_usable_frames"], 10)
+
+    def test_lost_support_and_half_resets_are_separate(self):
+        match = match_input(n=10)
+        match.half[6:] = 2
+        match.events = [
+            {"start_frame": 0, "end_frame": 2, "code": "SET PIECES", "tags": {}},
+            {"start_frame": 4, "end_frame": 10, "code": "SET PIECES", "tags": {}},
+        ]
+        events = summarize_prior_diagnostics(match)["event_counts"]
+        self.assertEqual(events["pending_stop_runs_reset_by_lost_support"], 1)
+        self.assertEqual(events["pending_stop_runs_reset_by_half_change"], 1)
+        self.assertEqual(events["confirmed_stop_runs"], 0)
+
+    def test_restart_is_counted_once_and_is_not_stop_cancellation(self):
+        report = summarize_prior_diagnostics(motion_after_stop())
+        self.assertEqual(report["event_counts"]["confirmed_stop_runs"], 1)
+        self.assertEqual(report["event_counts"]["stop_contexts_followed_by_confirmed_live"], 1)
+        self.assertEqual(report["confirmed_stop_run_share_followed_by_live"], 1.)
+        self.assertEqual(report["confirmed_stop_frames_overwritten_by_live"], 0)
+
+    def test_real_feature_builder_cannot_remove_stop_support(self):
+        for match in (match_input(tagged=True), match_input(outside=True), motion_after_stop()):
+            with self.subTest(events=bool(match.events)):
+                features = build_features(match)
+                before = build_priors(match)
+                after = build_priors(match, features)
+                np.testing.assert_array_equal(before.dead_evidence > .5, after.dead_evidence > .5)
+                report = summarize_prior_diagnostics(match, features)
+                self.assertEqual(report["without_control_comparison"]["changed_stop_frames"], 0)
+                self.assertEqual(report["confirmed_stop_frames_overwritten_by_live"], 0)
+
+    def test_control_adds_live_evidence_without_changing_stops(self):
+        match = match_input()
+        match.ball_xy_m[:, 0] += np.arange(12) * .3
+        match.ball_speed_mps[:] = 3.
+        match.players_xy_m[:, 0] = match.ball_xy_m + [.1, 0.]
+        match.players_xy_m[:, 1] = match.ball_xy_m + [5., 0.]
+        comparison = summarize_prior_diagnostics(match, build_features(match))["without_control_comparison"]
+        self.assertEqual(comparison["changed_stop_frames"], 0)
+        self.assertEqual(comparison["additional_live_frames_with_control"], 11)
+
+    def test_empty_disabled_and_excluded_reports_are_json_totals_only(self):
+        import json
+
+        for match, config in ((match_input(n=0), None),
+                              (match_input(), {"dead_ball": {"enabled": False}}),
+                              (match_input(), {"dead_ball": {"evidence_weight": 0}})):
+            report = summarize_prior_diagnostics(match, config=config)
+            self.assertIsNone(report["confirmed_stop_run_share_followed_by_live"])
+            json.dumps(report, allow_nan=False)
+            if not len(match.frame):
+                self.assertTrue(all(v is None for v in report["graded_frame_shares"].values()))
+        match = match_input(tagged=True)
+        match.half[:] = 0
+        report = summarize_prior_diagnostics(match)
+        self.assertTrue(all(v == 0 for v in report["frame_counts"].values()))
+        self.assertTrue(all(v is None for v in report["graded_frame_shares"].values()))
 
 
 if __name__ == "__main__":

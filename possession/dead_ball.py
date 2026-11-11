@@ -34,6 +34,7 @@ class DeadBallConfig:
     stop_duration_s: float = 0.6
     motion_duration_s: float = 0.2
     restart_context_s: float = 3.0
+    max_missing_gap_s: float = 0.0
     evidence_weight: float = 0.5
 
     def __post_init__(self):
@@ -54,6 +55,8 @@ class DeadBallConfig:
             raise ValueError("stop, motion, and restart-context durations must be positive")
         if not 0 <= self.evidence_weight <= 1:
             raise ValueError("dead_ball.evidence_weight must be in [0, 1]")
+        if not 0 <= self.max_missing_gap_s <= self.stop_duration_s:
+            raise ValueError("max_missing_gap_s must be between zero and stop_duration_s")
 
 
 def _section(config, name, cls):
@@ -126,10 +129,15 @@ def build_priors(match, features=None, config=None) -> PriorData:
     No feature-dictionary keys are assumed; only its existing team evidence and
     reliability can corroborate live motion. Input arrays are never changed.
 
-    Missing or unreliable observations give no dead/live opinion and reset
-    local confirmation context. Every temporal counter resets at a half change.
+    Missing observations give no dead/live opinion. An optional bounded gap
+    budget preserves stop support without counting missing frames as evidence.
+    Rejected observations and half changes always reset local context.
     Evidence starts at confirmation, with no retrospective boundary editing.
     """
+    return _build_priors(match, features, config)
+
+
+def _build_priors(match, features, config, totals=None):
     _validate_inputs(match, features)
     config = {} if config is None else config
     if not isinstance(config, dict):
@@ -145,6 +153,11 @@ def build_priors(match, features=None, config=None) -> PriorData:
     out.tag_team_reliability[excluded] = 0
     out.restart_evidence[excluded] = 0
     out.diagnostic_flags[excluded] = 0
+    if totals is not None:
+        totals.update(
+            graded_frames=int(np.count_nonzero(~excluded)),
+            ball_observed_frames=int(np.count_nonzero(match.ball_observed & ~excluded)),
+        )
     if not settings.enabled or settings.evidence_weight == 0 or n == 0:
         return out
 
@@ -157,6 +170,22 @@ def build_priors(match, features=None, config=None) -> PriorData:
     tagged_stop = still & tag_window
     outside_stop = still & (outside >= settings.outside_margin_m)
     stop_candidate = tagged_stop | outside_stop
+    if totals is not None:
+        totals.update(
+            ball_usable_frames=int(usable.sum()),
+            ball_missing_frames=int(np.count_nonzero(~match.ball_observed & ~excluded)),
+            ball_observed_unusable_frames=int(np.count_nonzero(
+                match.ball_observed & ~excluded & ~usable)),
+            usable_not_still_frames=int(np.count_nonzero(usable & ~still)),
+            still_without_stop_context_frames=int(np.count_nonzero(still & ~stop_candidate)),
+            stop_candidate_frames=int(stop_candidate.sum()),
+            stop_candidate_below_dwell_frames=0,
+            confirmed_stop_runs=0,
+            pending_stop_runs_reset_by_unusable_ball=0,
+            pending_stop_runs_reset_by_lost_support=0,
+            pending_stop_runs_reset_by_half_change=0,
+            stop_contexts_followed_by_confirmed_live=0,
+        )
     control = np.zeros(n, dtype=bool)
     if features is not None:
         # Moderate, explicit starting cutoffs; these are not calibrated odds.
@@ -166,27 +195,75 @@ def build_priors(match, features=None, config=None) -> PriorData:
     stop_frames = max(1, math.ceil(settings.stop_duration_s * match.fps))
     motion_frames = max(1, math.ceil(settings.motion_duration_s * match.fps))
     context_frames = max(1, math.ceil(settings.restart_context_s * match.fps))
+    # Floor keeps the configured maximum a strict upper bound on missing time.
+    gap_frames = math.floor(settings.max_missing_gap_s * match.fps)
     stop_run = motion_run = 0
+    missing_run = stop_missing = 0
+    last_usable = None
     last_stop = None
     restart_emitted = False
     previous_half = 0
     for frame in range(n):
         half = int(match.half[frame])
         if half != previous_half:
+            if totals is not None and 0 < stop_run < stop_frames:
+                totals["pending_stop_runs_reset_by_half_change"] += 1
             stop_run = motion_run = 0
             last_stop = None
             restart_emitted = False
+            missing_run = stop_missing = 0
+            last_usable = None
         previous_half = half
         if half == 0 or not usable[frame]:
+            motion_run = 0  # Live confirmation must remain consecutive.
+            if half and not match.ball_observed[frame]:
+                missing_run += 1
+                # Only pending confirmation can bank support across gaps.
+                # Confirmed stops retain the per-gap bound, not a lifetime budget.
+                if 0 < stop_run < stop_frames:
+                    stop_missing += 1
+                if (last_usable is not None and missing_run <= gap_frames
+                        and stop_missing <= gap_frames):
+                    out.diagnostic_flags[frame] |= UNUSABLE_BALL
+                    continue
+            if totals is not None and half and 0 < stop_run < stop_frames:
+                totals["pending_stop_runs_reset_by_unusable_ball"] += 1
             stop_run = motion_run = 0
             last_stop = None
             restart_emitted = False
+            missing_run = stop_missing = 0
+            last_usable = None
             if half:
                 out.diagnostic_flags[frame] |= UNUSABLE_BALL
             continue
 
+        if missing_run and last_usable is not None:
+            gap_speed = (np.linalg.norm(match.ball_xy_m[frame] - match.ball_xy_m[last_usable])
+                         * match.fps / (frame - last_usable))
+            # Reacquiring a stationary ball somewhere else does not establish
+            # that it remained still through the unseen interval.
+            if gap_speed > settings.stationary_speed_mps:
+                if totals is not None and 0 < stop_run < stop_frames:
+                    totals["pending_stop_runs_reset_by_lost_support"] += 1
+                stop_run = stop_missing = 0
+            if gap_speed > settings.max_ball_speed_mps:
+                last_stop = None
+                restart_emitted = False
+        missing_run = 0
+        last_usable = frame
+        if totals is not None:
+            if not stop_candidate[frame] and 0 < stop_run < stop_frames:
+                totals["pending_stop_runs_reset_by_lost_support"] += 1
         stop_run = stop_run + 1 if stop_candidate[frame] else 0
+        if not stop_candidate[frame]:
+            stop_missing = 0
+        if totals is not None and stop_candidate[frame]:
+            if stop_run < stop_frames:
+                totals["stop_candidate_below_dwell_frames"] += 1
+            elif stop_run == stop_frames:
+                totals["confirmed_stop_runs"] += 1
         if stop_run >= stop_frames:
+            stop_missing = 0
             out.dead_evidence[frame] = .9
             out.dead_reliability[frame] = settings.evidence_weight
             if tagged_stop[frame]:
@@ -206,6 +283,8 @@ def build_priors(match, features=None, config=None) -> PriorData:
             # A single pulse when motion is confirmed after an observed stop.
             # A bare tag keeps its original weaker window-shaped clue.
             if recent_stop and not restart_emitted:
+                if totals is not None:
+                    totals["stop_contexts_followed_by_confirmed_live"] += 1
                 out.restart_evidence[frame] = max(out.restart_evidence[frame], .75)
                 out.diagnostic_flags[frame] |= CONFIRMED_RESTART
                 restart_emitted = True
@@ -214,3 +293,54 @@ def build_priors(match, features=None, config=None) -> PriorData:
     return PriorData(out.dead_evidence, out.dead_reliability, out.restart_evidence,
                      out.tag_team_evidence, out.tag_team_reliability,
                      out.diagnostic_flags)
+
+
+def summarize_prior_diagnostics(match, features=None, config=None):
+    """Return totals only; never frame IDs, arrays, paths, tags, or metadata.
+
+    Re-run the unchanged builder with counters and, if features are supplied,
+    compare with no control corroboration. No labels or decoder are consumed.
+    All frame shares use graded frames as denominator; zero denominators give
+    None. A subsequent live confirmation is a restart, not a cancelled stop.
+    """
+    totals = {}
+    priors = _build_priors(match, features, config, totals)
+    active = match.half > 0
+    enabled = _section({} if config is None else config, "dead_ball", DeadBallConfig)
+    motion_enabled = enabled.enabled and enabled.evidence_weight > 0
+    stop = (priors.dead_evidence > .5) & (priors.dead_reliability > 0) & active
+    live = (priors.dead_evidence < .5) & (priors.dead_reliability > 0) & active
+    totals["confirmed_stop_frames"] = int(stop.sum())
+    totals["confirmed_live_frames"] = int(live.sum())
+    if motion_enabled and len(match.frame):
+        totals["usable_without_confirmed_stop_frames"] = (
+            totals["ball_usable_frames"] - totals["confirmed_stop_frames"])
+    frame_counts = {name: value for name, value in totals.items() if name.endswith("frames")}
+    event_counts = {name: value for name, value in totals.items() if not name.endswith("frames")}
+    graded = totals["graded_frames"]
+    result = {
+        "motion_enabled": motion_enabled,
+        "frame_counts": frame_counts,
+        "graded_frame_shares": {name: value / graded if graded else None
+                                for name, value in frame_counts.items()},
+        "event_counts": event_counts,
+        # Structural invariant check, not an observed attrition mechanism:
+        # validated stationary/moving thresholds make the two gates disjoint.
+        "confirmed_stop_frames_overwritten_by_live": int(np.count_nonzero(
+            ((priors.diagnostic_flags & (STOP_TAG_AND_STILL | STOP_OUTSIDE_AND_STILL)) != 0)
+            & live)),
+        "confirmed_stop_run_share_followed_by_live": (
+            totals["stop_contexts_followed_by_confirmed_live"] / totals["confirmed_stop_runs"]
+            if totals.get("confirmed_stop_runs") else None),
+    }
+    if features is not None:
+        baseline = build_priors(match, features=None, config=config)
+        baseline_stop = (baseline.dead_evidence > .5) & (baseline.dead_reliability > 0) & active
+        result["without_control_comparison"] = {
+            "confirmed_stop_frames_without_control": int(baseline_stop.sum()),
+            "confirmed_stop_frames_with_control": int(stop.sum()),
+            "changed_stop_frames": int(np.count_nonzero(stop != baseline_stop)),
+            "additional_live_frames_with_control": int(np.count_nonzero(
+                live & ~((baseline.dead_evidence < .5) & (baseline.dead_reliability > 0)))),
+        }
+    return result

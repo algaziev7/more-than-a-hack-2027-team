@@ -82,7 +82,8 @@ def build_features(match, config=None) -> FeatureData:
     # A rejected raw speed must not erase observed fast movement from the team clue.
     clue_speed = np.where(speed_usable, speed, displacement)
     speed_weight = FAST_BALL_MPS / np.fmax(clue_speed, FAST_BALL_MPS)
-    reliability = proximity * np.abs(2 * home_support - 1) * speed_weight
+    # Margin is left to the decoder's team_margin_threshold; multiplying it in here counted it twice.
+    reliability = proximity * speed_weight
 
     features = {
         "home_nearest_m": home,
@@ -103,24 +104,23 @@ def build_features(match, config=None) -> FeatureData:
     )
 
 
-def reliability_breakdown(features: FeatureData, cutoff: float = 0.25) -> dict:
-    """Aggregate counts of why frames with tracking evidence fall below `cutoff`.
+def reliability_breakdown(features: FeatureData, cutoff: float = 0.25,
+                          margin_min: float = 0.15) -> dict:
+    """Aggregate counts of why frames with tracking evidence give no team clue.
 
-    Each low frame gets the first factor of reliability = proximity * margin * speed
-    that takes the running product below the cutoff: "far" (nearest player alone
-    too far, i.e. beyond CONTROL_RADIUS_M * (1 - cutoff)), "contested" (teams at
-    similar distances) or "fast" (ball speed above FAST_BALL_MPS). Counts only.
+    Below `cutoff`, reliability = proximity * speed is "far" (nearest player
+    beyond CONTROL_RADIUS_M * (1 - cutoff)) or else "fast" (ball above
+    FAST_BALL_MPS). "contested" counts frames at or above the cutoff whose
+    margin is under the decoder's `margin_min`. Counts only.
     """
     reliability = features.team_reliability
-    home = features.features["home_nearest_m"]
-    away = features.features["away_nearest_m"]
+    margin = np.abs(features.team_evidence[:, 0] - features.team_evidence[:, 1])
     with np.errstate(invalid="ignore"):
-        proximity = 1 - np.fmin(home, away) / CONTROL_RADIUS_M
-        margin = np.abs(away - home) / (home + away)
+        proximity = 1 - np.fmin(features.features["home_nearest_m"],
+                                features.features["away_nearest_m"]) / CONTROL_RADIUS_M
     evidence = reliability > 0
     low = evidence & (reliability < cutoff)
     far = low & (proximity < cutoff)
-    contested = low & ~far & (proximity * margin < cutoff)
     return {"tracking_frames": int(evidence.sum()), "below_cutoff": int(low.sum()),
-            "far": int(far.sum()), "contested": int(contested.sum()),
-            "fast": int((low & ~far & ~contested).sum())}
+            "far": int(far.sum()), "fast": int((low & ~far).sum()),
+            "contested": int((evidence & ~low & (margin < margin_min)).sum())}

@@ -1,11 +1,11 @@
 # Beks — Tracking features and evaluation
 
 - Owner: Beks
-- Status: v1 merged (PR #8); reliability diagnosis in progress
+- Status: v1 merged (PR #8); option (c) implemented, agreed with E2, PR pending
 - Branch: `e4/reliability-v1` (v1 was `e4/features-v1`)
 - Reviewer: E3
 - Owned files: `possession/features.py`, `scripts/check_solution.py`, feature tests and evaluation policy
-- Last update: 2026-11-10
+- Last update: 2026-11-11
 
 ## Feature handoff
 
@@ -34,8 +34,9 @@ outlier can also invalidate the displacement into the following frame.
 The H/A clue requires an in-pitch ball and a distance to each team, with a
 unique nearest team closer than 3 m. Home support is the away distance divided
 by the sum of both distances, with away support as its complement.
-Reliability falls with distance to the ball, closeness of the two team
-distances, and ball speed above 8 m/s. If a supplied speed is rejected,
+Reliability is `(1 - nearest / 3 m) * 8 / max(speed, 8 m/s)`: it falls with
+distance to the ball and ball speed above 8 m/s. Closeness of the two team
+distances is not in reliability (E2's `team_margin_threshold` judges it). If a supplied speed is rejected,
 adjacent displacement can still reduce reliability. With neither source
 the distance clue is unchanged. Unavailable or ambiguous evidence is `(0.5, 0.5)` with
 reliability zero. These are untuned heuristics. The function accepts the
@@ -120,7 +121,7 @@ separate margin check or the margin factor from reliability, so it is not
 counted twice. No labels exist to choose between them, so the argument must
 come from synthetic cases and coverage counts, never public-window scores.
 
-Proposed (E4, not yet agreed with E2): option (c), drop the margin factor so
+Agreed with Belek (E2) on 2026-11-11 and implemented on this branch: option (c), drop the margin factor so
 `reliability = proximity * speed_weight` and let the decoder's
 `team_margin_threshold` alone judge contested frames. Synthetic geometry
 (slow ball, decoder margin 0.15) under current / (a) cutoff 0.15 / (c):
@@ -145,11 +146,24 @@ tag instead of letting the tag fill the gap. That interacts with E2's
 planned "tags fill gaps" fusion change and must be decided together.
 Reliability is a shared interface, so E2 agrees before E4 changes it.
 
+Belek confirmed the margin factor and his margin check are the same
+quantity. His PR #13 replaces averaging with one source per frame: decisive
+tracking alone, contested tracking gives no candidate, tags only where
+tracking is below the floor. That resolves the fusion risk above.
+`reliability_breakdown` now reports "far" and "fast" below the cutoff and
+"contested" (reliability passes, margin under 0.15) separately. Full suite:
+181 tests passed on Windows Python 3.12 after merging `main` at `7431a44`.
+
+Knock-on for E3: `dead_ball` treats `team_reliability >= 0.5` with evidence
+>= 0.75 as control. Under (c) that passes whenever the nearest player is
+within 1.5 m of a slow ball and margin is at least 0.5, so it passes more
+often. Almaz must review before merge.
+
 ## Next exact action
 
-Beks sends Belek the proposal above. If Belek agrees, Beks changes
-`build_features` on this branch, updates the synthetic tests, reruns the
-breakdown locally (counts stay local), and opens the PR with E2 and E3
-notified. Belek decides how fused evidence treats contested tracking.
-Almaz re-reviews PR #6 so it can merge. After E1 produces the final CSV,
-Beks runs `scripts/check_solution.py` on that exact file.
+Open the E4 PR for this branch, notifying Belek (E2) and Almaz (E3). Then
+Beks and Belek run four local smoke runs (current main, E4 only, PR #13
+only, both) and compare coverage and spell counts locally, keeping the
+numbers local. Merge neither PR until that comparison is done. Beks also
+reviews Almaz's PR #11, which waits on E4 review. After E1 produces the
+final CSV, Beks runs `scripts/check_solution.py` on that exact file.

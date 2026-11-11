@@ -161,19 +161,18 @@ class TrackingFeatureTests(unittest.TestCase):
         self.assertFalse(out.validity["away_nearest_m"][0])
         np.testing.assert_array_equal(out.team_reliability, 0)
 
-    def test_reliability_breakdown_names_the_factor_that_drops_each_frame(self):
+    def test_reliability_counts_proximity_and_speed_but_not_margin(self):
         # Separate halves isolate frames, so only the supplied raw speed matters.
         far_slot = [50, 50]
-        players = [[[10.5, 20], [20, 20], far_slot],    # reliable: 0.83 * 0.90
+        players = [[[10.5, 20], [20, 20], far_slot],    # reliable: proximity 0.83
                    [[12.4, 20], [99, 60], far_slot],    # far: nearest 2.4 m > 2.25 m
-                   [[11, 20], [11.5, 20], far_slot],    # contested: 0.67 * 0.2
+                   [[11, 20], [11.2, 20], far_slot],    # contested: margin 0.09 < 0.15
                    [[10.5, 20], [20, 20], far_slot],    # fast: 32 m/s quarters it
-                   [[30, 20], [40, 20], far_slot]]      # no evidence beyond 3 m
-        match = tracking([[10, 20]] * 5, players, half=[1, 2, 1, 2, 1],
-                         speed=[0, 0, 0, 32, 0])
+                   [[30, 20], [40, 20], far_slot],      # no evidence beyond 3 m
+                   [[11, 20], [12, 20], far_slot]]      # 1 m vs 2 m: was rejected before (c)
+        match = tracking([[10, 20]] * 6, players, half=[1, 2, 1, 2, 1, 2],
+                         speed=[0, 0, 0, 32, 0, 0])
         out = build_features(match)
-        self.assertGreaterEqual(out.team_reliability[0], .25)
+        np.testing.assert_allclose(out.team_reliability, [5 / 6, .2, 2 / 3, 5 / 24, 0, 2 / 3])
         self.assertEqual(reliability_breakdown(out), {
-            "tracking_frames": 4, "below_cutoff": 3, "far": 1, "contested": 1, "fast": 1})
-        # Proximity alone caps reliability: beyond 2.25 m no opponent distance reaches 0.25.
-        self.assertLess(out.team_reliability[1], .25)
+            "tracking_frames": 5, "below_cutoff": 2, "far": 1, "fast": 1, "contested": 1})

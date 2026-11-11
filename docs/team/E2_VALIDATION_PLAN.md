@@ -1,7 +1,11 @@
 # E2 algorithm validation and engineering setup
 
 Date: 2026-10-23. Owners: Belek and Isken, working together on E2.
-Status: implementation plan; the validation harness and decoder do not exist yet.
+Status: original implementation plan, with an implemented first validation
+increment on `e2/isken-validation` as of 2026-11-08. See the
+[synthetic validation report](experiments/2026-11-08-e2-synthetic-validation.md)
+for actual checks, fixes, timing measurements, and remaining policy questions.
+Historical assessments and proposed gates below are not current completion claims.
 E4 reviews algorithm behavior and evaluation policy; E1 owns shared contracts and
 environment; E3 supplies stop/restart evidence; E5 owns integration and CI.
 

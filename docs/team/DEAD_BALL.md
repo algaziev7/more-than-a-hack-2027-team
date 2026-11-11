@@ -4,6 +4,53 @@
 It returns Azamat's `PriorData`, ready for Belek and Isken's state machine.
 The state machine still decides the final H, A, D, or X labels.
 
+## Bounded missing-observation support (review candidate)
+
+Set `dead_ball.max_missing_gap_s` to enable bounded tolerance; the default is
+0, preserving the original consecutive-observation policy described below.
+The synthetic candidate uses 0.2 s. This is an engineering hypothesis, not a
+selected competition setting. Compare it locally against 0 with otherwise
+identical inputs/config using the aggregate diagnostic recipe below.
+
+For the candidate run, insert this before building features/priors in that recipe:
+
+```python
+config.setdefault("dead_ball", {})["max_missing_gap_s"] = 0.2
+```
+
+Save baseline and candidate totals separately locally; use 0 for the baseline.
+
+The detector still requires `ceil(stop_duration_s * fps)` observed supporting
+frames. Missing observations emit neutral dead/live evidence and never advance
+confirmation. A pending stop run may retain its support through at most
+`floor(max_missing_gap_s * fps)` missing frames **in total**, including repeated
+gaps; exceeding that budget resets the run and restart context. Thus intermittent
+observations cannot accumulate indefinitely toward a new confirmation. Confirmation
+clears the cumulative budget. A confirmed stop tolerates repeated gaps, each no
+longer than that same limit, provided every reacquired observation still supports
+the stop. With no pending stop run, retained restart context also uses only the
+per-gap limit and still expires according to the wall-clock `restart_context_s`.
+
+On reacquisition, displacement from the last usable position must also fit the
+stationary-speed bound over elapsed time to retain pending stop support. A
+stationary observation at a new location starts fresh support. Implausible
+cross-gap displacement clears restart context too. This check does not impute
+positions or claim the unseen trajectory was stationary. Rejected observed
+samples always reset context; tolerance applies only to actually missing balls.
+Live-motion dwell always resets on a gap, and half changes reset everything.
+
+Selection argument: dropping all evidence at a single occlusion makes confirmed
+stops depend strongly on uninterrupted detection. Retaining a bounded amount of
+observed support addresses that failure while preserving the evidence count,
+requiring fresh motion confirmation, and bounding stale support. The risk is
+an unseen brief restart/stop within the gap; endpoint checks cannot rule it out.
+Review this tradeoff with E2/E4 before enabling it in a frozen submission.
+Long unobserved stoppages and still balls lacking contextual support remain
+unresolved. More D frames alone do not establish better predictions.
+
+Synthetic verification: 53 E3 tests pass, including thirteen gap-policy tests.
+No restricted-data experiment or public-label tuning was performed.
+
 This is an untuned first version. It can suggest that play is stopped or live;
 it cannot establish the referee's decision from tracking alone.
 
@@ -178,6 +225,91 @@ restart_here = bool(priors.diagnostic_flags[frame] & CONFIRMED_RESTART)
 ```
 
 ## Tests and remaining checks
+
+### Totals-only coverage diagnostics (2026-11-10)
+
+`summarize_prior_diagnostics(match, features, config)` runs the same inference
+with aggregate counters, then compares it with control corroboration disabled.
+It returns JSON-compatible totals and shares only. It does not return frame
+IDs, positions, tags, paths, metadata, or labels. The existing `build_priors`
+signature, shared contracts, thresholds, and outputs are unchanged.
+
+Run this **locally**, from the branch checkout in the team environment. Use the
+same config as the prediction being investigated (replace the example config
+path if needed). Do not run restricted-data commands through hosted AI tools.
+
+```bash
+python - <<'PY'
+import json
+from pathlib import Path
+from possession.data import load_match
+from possession.features import build_features
+from possession.dead_ball import summarize_prior_diagnostics
+from scripts.predict import load_config
+
+config = load_config("configs/input-v1.json")
+match = load_match(config=config)
+features = build_features(match, config)
+report = summarize_prior_diagnostics(match, features, config)
+Path("runs").mkdir(exist_ok=True)
+Path("runs/prior-coverage.json").write_text(
+    json.dumps(report, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+print("Totals saved locally to runs/prior-coverage.json")
+PY
+```
+
+Interpret `frame_counts` and `graded_frame_shares` together: **all frame shares
+use graded frames**, including `usable_without_confirmed_stop_frames`, which
+answers E2's requested coverage question. These four disjoint buckets sum to
+`ball_usable_frames` when motion inference is enabled:
+
+1. `usable_not_still_frames`: usable speed does not meet stillness rules.
+2. `still_without_stop_context_frames`: still, but neither a restart tag nor
+   sufficient outside-pitch distance supports a stop.
+3. `stop_candidate_below_dwell_frames`: supporting still observations have not
+   yet reached the consecutive dwell requirement. This includes the warm-up
+   of successful runs, so it is not a count of failed stops.
+4. `confirmed_stop_frames`: supporting still observations after confirmation.
+
+`ball_missing_frames` and `ball_observed_unusable_frames` separate absence
+from rejected observations. `event_counts` counts incomplete stop runs reset
+by unusable ball, loss of supporting stillness/context, or a half change.
+A run left incomplete at end of input is not counted as reset. These counts
+explain gates, not the number of actual referee stoppages missed.
+
+`confirmed_stop_run_share_followed_by_live` uses **confirmed stop runs** as its
+denominator. It counts runs whose retained context later produces one confirmed
+restart pulse within the configured context lifetime. It bridges only tolerated
+gaps, never halftime, and is not an accuracy or cancellation rate. A new confirmed run
+replaces the preceding context. `confirmed_stop_frames_overwritten_by_live`
+is a **structural invariant check**, not a measured coverage-loss mechanism.
+It counts simultaneous stop/live flags and must be zero: configuration validation
+requires stationary speed < moving speed, making their conditions disjoint.
+Later live evidence does not erase earlier stop evidence in E3.
+
+`without_control_comparison.changed_stop_frames` should also be zero. E4's
+team evidence only corroborates the live branch; it cannot change E3's stop
+candidate or dwell. Additional live frames can still clear pending D support
+or end D sooner **in the decoder**, which can reduce final D labels without
+reducing prior stop coverage. A decoder comparison must be done separately
+by E2 with identical inputs/config/code. No decoder changes are made here.
+
+When motion inference is disabled, motion-gate counters are omitted. Empty
+denominators return JSON null. The helper runs priors twice when features are
+supplied; it is an opt-in investigation tool, not extra pipeline work.
+
+The strong team hints across tag windows are unchanged. E2's proposed use of
+tags only when tracking evidence is unavailable requires E2/E4 review of the
+fusion policy; this diagnostic patch does not implement that proposal.
+
+Synthetic follow-up: 40 E3 tests pass, including seven coverage/invariance
+tests against E4's actual feature builder. Full suite: 134 discovered, 132 pass,
+two real-decoder integration skips because E2 is absent from main. Environment:
+Python 3.15.0, existing pinned dependencies. No match run, label inspection,
+parameter tuning, or accuracy measurement was performed. The dominant source
+of real-match attrition remains unknown until an authorised local run.
+
+### Original implementation evidence
 
 ```bash
 python -m unittest discover -s tests -v

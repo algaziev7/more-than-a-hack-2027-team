@@ -20,7 +20,7 @@ docs/team/decisions/2026-10-23-e2-data-evidence-and-state-machine-design.md. Sum
 - Evidence is a (value, reliability) pair, never a hard per-frame guess (see Decision 1 there).
 - This is a hysteresis state machine, not a per-frame classifier smoothed afterwards: a candidate
   state must win for `dwell_frames` *occurrences* before a change is confirmed (team changes are
-  then backdated to their first supporting frame, Decision 8).
+  then backdated to the start of their latest support run, Decision 8).
 - Dead and team transitions get separate dwell lengths (dead shorter -- stoppages are often
   announced cleanly; team changes need more sustained proof).
 - Every half starts in D. Correct for the second half (graded before its own kickoff); merely
@@ -56,7 +56,8 @@ docs/team/decisions/2026-10-23-e2-data-evidence-and-state-machine-design.md. Sum
   that floor. `diagnostics["team_sources"]` counts graded frames decided each way.
 - Decision 8: a team change needs `team_dwell_s` = 1.0 s of support, because CHALLENGE.md
   requires *controlled* possession, not a touch or deflection. The dwell decides whether a team
-  change happened; the boundary is then backdated to its first supporting frame (not for D, and
+  change happened; the boundary is then backdated to the start of its latest support run (a gap
+  longer than the dwell breaks a run; not for D, and
   not for the Decision 6 safety valve). Each transition records `frame` (boundary) and `confirmed_frame`.
 
 `config` follows the same convention as `dead_ball.DeadBallConfig` / `tagging.TaggingConfig`: the
@@ -460,12 +461,20 @@ def decode(match, features, priors, config=None) -> Prediction:
             required = settings.team_dwell_frames
         if len(pending_frames) >= required:
             # Decision 8: for a team change the dwell decides *whether* it happened; the boundary
-            # goes back to its first supporting frame, where the definition puts it. Every frame
+            # moves back towards its first support, where the definition puts it. Every frame
             # in between was paused or supported this candidate, so nothing else is overwritten.
             # Not for the safety valve (team evidence alone ending a confirmed stop is too weak),
             # nor for D: its 2-frame dwell costs ~1 frame, while backdating could turn up to
             # evidence_window_s of unobserved play into a stoppage between two stray dead frames.
-            start = pending_frames[0] if this_candidate != D and not gated else i
+            # Only back through the latest support run: a gap longer than the dwell with no
+            # support breaks it, so a stray touch before an occlusion cannot pull the boundary
+            # back (Beks, PR #13). Never later than unbacked confirmation would have been.
+            start = i
+            if this_candidate != D and not gated:
+                for earlier in reversed(pending_frames):
+                    if start - earlier > settings.team_dwell_frames:
+                        break
+                    start = earlier
             labels[start:i] = this_candidate
             transitions.append({
                 "frame": int(match.frame[start]) if hasattr(match, "frame") else start,

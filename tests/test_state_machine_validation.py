@@ -53,8 +53,9 @@ def grouped_reference(symbols, half, team_required, dead_required, latched_requi
     between two isolated stop observations means they are not one stop. The evidence-age window
     (evidence_window_s, ~150 frames by default) is not modelled: every sequence here is shorter.
 
-    Decision 8 (2026-11-11): a confirmed team change is backdated to its first supporting symbol,
-    except the latched safety valve; D is never backdated.
+    Decision 8 (2026-11-11): a confirmed team change is backdated to the start of its latest
+    support run (a gap longer than team_required breaks it), except the latched safety valve; D
+    is never backdated.
     """
     if latched_required is None:
         latched_required = team_required
@@ -64,7 +65,7 @@ def grouped_reference(symbols, half, team_required, dead_required, latched_requi
         if half_id == 0:
             continue
         state, dead_confirmed = "D", False
-        pending_symbol, pending_count = None, 0
+        pending_symbol, pending_count, last_support = None, 0, None
         for i in indices:
             symbol = symbols[i]
             if symbol == "D":
@@ -90,8 +91,11 @@ def grouped_reference(symbols, half, team_required, dead_required, latched_requi
                 continue
             if candidate == pending_symbol:
                 pending_count += 1
+                if i - last_support > team_required:  # a long unsupported gap breaks the run
+                    pending_start = i
             else:
                 pending_count, pending_start = 1, i
+            last_support = i
             pending_symbol = candidate
             latched = candidate != "D" and state == "D" and dead_confirmed
             backdate = candidate != "D" and not latched
@@ -306,10 +310,15 @@ class StateMachineValidationTests(unittest.TestCase):
         self.assertEqual(result.labels[30:60].tolist(), list("A" * 30))  # incl. the 5 paused
         (_, turnover) = result.diagnostics["transitions"]
         self.assertEqual((turnover["frame"], turnover["confirmed_frame"]), (30, 59))
-        # Support older than evidence_window_s is dropped first: an isolated touch 6 s earlier
-        # (frame 30) does not drag the boundary back; it lands on the first surviving A (175).
-        result = decode(*evidence_sequence("H" * 30 + "A" + "." * 144 + "A" * 25))
-        self.assertEqual(label_transitions(result.labels, start=30), [(175, "H", "A")])
+        # Beks, PR #13: a stray touch, 5 s with no support, then 24 A confirms A, but the
+        # boundary stays at the start of the latest support run (156), not the stray touch (30).
+        result = decode(*evidence_sequence("H" * 30 + "A" + "." * 125 + "A" * 24 + "H" * 5))
+        (_, turnover) = result.diagnostics["transitions"]
+        self.assertEqual((turnover["frame"], turnover["confirmed_frame"]), (156, 179))
+        self.assertTrue(np.all(result.labels[:156] == "H"))
+        # Short gaps (a duel, an A every 6th frame) do not break the run: full backdate.
+        result = decode(*evidence_sequence("H" * 30 + ("A" + "." * 5) * 25))
+        self.assertEqual(label_transitions(result.labels, start=30), [(30, "H", "A")])
         # D is never backdated: two stray dead frames do not turn the gap between into a stop.
         result = decode(*evidence_sequence("H" * 30 + "D" + "." * 140 + "D"))
         self.assertEqual(label_transitions(result.labels, start=30), [(171, "H", "D")])
@@ -360,9 +369,9 @@ class StateMachineValidationTests(unittest.TestCase):
         result = decode(*evidence_sequence("H" * 30 + "A" * 24 + "." * 1000 + "A"))
         self.assertEqual(label_transitions(result.labels, start=30), [])
         # Within the default 150-frame window the gap is still tolerated (Decision 3); the
-        # confirmed change is backdated to the first A (Decision 8).
+        # 120-frame gap breaks the support run for backdating, so the boundary is the last A.
         result = decode(*evidence_sequence("H" * 30 + "A" * 24 + "." * 120 + "A"))
-        self.assertEqual(label_transitions(result.labels, start=30), [(30, "H", "A")])
+        self.assertEqual(label_transitions(result.labels, start=30), [(174, "H", "A")])
         # Just outside it, the oldest support has aged out.
         result = decode(*evidence_sequence("H" * 30 + "A" * 24 + "." * 127 + "A"))
         self.assertEqual(label_transitions(result.labels, start=30), [])
@@ -414,8 +423,11 @@ class StateMachineValidationTests(unittest.TestCase):
         # the cost of requiring the inserted "R" (restart proof) before team evidence counts.
         # Decision 8 (2026-11-11): team changes are backdated to their first supporting frame;
         # stops keep their 2-frame dwell (+1); restarts stay +1, the restart-proof frame has no team.
+        # The 100-frame occlusion breaks the support run, so that turnover lands at its last run
+        # (+112), still earlier than unbacked confirmation (+124): the cost of not reaching back
+        # to a stray touch across a long gap (Beks, PR #13).
         expected = (([0], 0, 0), ([1], 0, 0), ([1], 0, 0),
-                    ([1, 1], 0, 0), ([0], 0, 0), ([], 2, 0),
+                    ([1, 1], 0, 0), ([112], 0, 0), ([], 2, 0),
                     ([0, 0], 0, 0), ([0, 0], 0, 0))
         for case, wanted in zip(TIMING_CASES, expected):
             with self.subTest(case=case.name):

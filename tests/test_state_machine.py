@@ -154,9 +154,9 @@ class StateMachineTests(unittest.TestCase):
 
     def test_missing_evidence_holds_current_state(self):
         """No ball, no tag, no reliability at all: the state must persist, not drift to D or X."""
-        n = 60
+        gap = slice(LEAD, LEAD + 35)  # a long stretch with nothing to vote on, after H is earned
+        n = gap.stop + 5
         features, priors = _establish_home(n)
-        gap = slice(20, 55)  # a long stretch with nothing to vote on
         features.team_reliability[gap] = 0.0
         priors.dead_reliability[gap] = 0.0
         labels = _run(_match(n), features, priors)

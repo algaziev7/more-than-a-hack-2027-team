@@ -1,11 +1,9 @@
 # Team possession pipeline
 
-E1 inputs, E4 tracking features and E3 combined priors are merged on main.
-This E5 branch adds their wiring to `possession.state_machine.decode`, synthetic
-CI and private reproducibility manifests. E2's decoder remains in
-[PR #6](https://github.com/algaziev7/more-than-a-hack-2027-team/pull/6).
-Until a reviewed decoder is integrated, prediction exits before opening assets.
-There is no complete team submission or measured accuracy improvement yet.
+E1 inputs, E4 tracking features, E3 combined priors, E2's decoder and E5's
+wiring, synthetic CI and private reproducibility manifests are all merged on
+main, and prediction runs end to end. There is no final team submission or
+measured accuracy improvement yet; see [the release procedure](docs/team/RELEASE.md).
 
 ## Asset-free checks
 

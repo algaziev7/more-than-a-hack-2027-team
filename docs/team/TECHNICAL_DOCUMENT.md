@@ -1,10 +1,9 @@
 # Possession system — technical draft
 
-Status: E5 review branch, 2026-11-10. This is an assembly draft, not a final
-submission document. E1/E3/E4 implementations are merged. E2's decoder is in
-[PR #6](https://github.com/algaziev7/more-than-a-hack-2027-team/pull/6) and E5's
-wiring is on `e5/pipeline-v1`. No final candidate, team-named CSV, cross-laptop
-reproduction or full-match accuracy result has been established.
+Status: release-candidate draft, 2026-11-12. All five modules (E1-E5) are
+merged on main and run end to end. Still open: the frozen release commit, the
+second-laptop reproduction, owner sign-offs and the registered team name. No
+full-match accuracy result is claimed.
 
 ## Approach and assets
 
@@ -64,20 +63,42 @@ confirmed stop can produce one stronger restart pulse. Missing/unusable
 observations and half changes reset motion history. These rules are untuned;
 see [DEAD_BALL.md](DEAD_BALL.md) for thresholds and reason flags.
 
-## Possession rules — E2 pending review
+## Possession rules — E2
 
-The unmerged decoder at `9883b4d` combines E4/E3 team clues by reliability, uses
-separate dead/live evidence and requires dwell before transitions. Ordinary
-pending support has bounded age and tolerates neutral gaps. Each half starts
-with D and no earlier state; ungraded frames receive X. A confirmed stop latches
-D until restart/live evidence or a longer, bounded team-evidence safety valve.
-Confirmed live play cancels a pending stop. Configuration prevents overlapping
-live/dead thresholds and bare tag restart hints from clearing the stop latch.
+`possession/state_machine.py` turns the per-frame evidence into labels with a
+hysteresis state machine. The reasoning behind each rule is in the
+[E2 decision record](decisions/2026-10-23-e2-data-evidence-and-state-machine-design.md)
+(Decisions 1-11).
 
-These rules aim to avoid pass/deflection flicker, but dwell can delay or miss short
-possessions. They are review-branch behavior, not merged E5 policy. E2/E4 must
-approve the final description. The unresolved case of confirmed live play with
-unknown team can remain D; no new E5 rule resolves it. E2 owns any changes.
+- **Team evidence.** Tracking whose reliability clears a floor decides a frame
+  alone; contested tracking (a duel) gives no vote. Tags fill only frames where
+  tracking is below the floor and are never averaged with it. A tag-only frame
+  cannot cancel a pending turnover that tracking supports.
+- **Team changes.** A change needs 1.0 s of support, because CHALLENGE.md asks
+  for controlled possession rather than a touch. A frame without decisive
+  evidence (often a missing ball) pauses the count instead of resetting it, and
+  support older than 6 s is dropped. Once confirmed, the boundary moves back to
+  the start of its latest support run; the first change after a restart signal
+  takes the restart frame when it follows within 2 s.
+- **Stoppages.** E3's confirmed stop enters D after two frames (E3 has already
+  waited 0.6 s). Leaving a confirmed stop needs E3's live-motion or restart
+  evidence; team evidence alone can end it only after 3 s, so a missed restart
+  cannot pin D indefinitely.
+- **Periods.** Each half starts in D with no memory of the previous one. Half 1
+  is graded from its kickoff and is live from its first graded frame. Half 2 is
+  graded from before its kickoff (FAQ.md), so it stays D until E3 confirms play
+  started, and never before the half's first `Kick Off (Start)` tag frame; a
+  half without such a tag falls back to E3's confirmation alone. X is used only
+  for ungraded frames.
+
+Known limits: possessions shorter than about 1 s can be missed; stops are
+labelled when E3 confirms them, not when the ball went dead; stoppages inside the
+pitch without a set-piece tag are not detected; live play whose team is unknown
+stays D; the 3 s fallback can end a stop on team evidence alone (including tags)
+without proof that play resumed; a stale opposing tag during a long ball
+occlusion can create a brief turnover; a start tag that begins early or late
+shifts the second-half start. All thresholds are engineering choices, not fitted
+values, and none was chosen against the public five minutes.
 
 ## Training, validation and limitations
 
@@ -89,16 +110,25 @@ The public five minutes may check pipeline correctness only, never tuning,
 selection or accuracy improvement claims.
 
 Synthetic tests cover contracts, absent/disabled tags, frame mismatches, team
-swapping, half independence and repeatable export. E5 also combined its work
-with the unmerged E2 revision in a disposable synthetic checkout. See
+swapping, half independence and repeatable export, and the full pipeline runs on
+invented inputs in CI. See
 [the E5 handoff](owners/goblin.md) for measured test counts. Those results do
 not establish hidden-match accuracy. Restricted full-data jobs and exact CSV
 hash reproduction on a second laptop remain human-run release requirements.
 
+Use of published answers: the public five minutes were scored once, as a
+pipeline check (frame alignment, label meaning), and not used to choose between
+versions. The second-half start rule (Decision 11) was checked once, locally,
+against the second-half kickoff frame published in FAQ.md, with yes/no answers
+only: whether the start tag begins after the early opening it was meant to
+prevent, and whether the first second-half possession is at or after the
+published kickoff. No threshold or frame was chosen from that check and nothing
+was iterated against it.
+
 ## Reproduction
 
 Use Python 3.12 and `requirements-team.lock`; run the synthetic suite and setup
-smoke test from a clean checkout. After reviewed E2/E5 integration, set the local
+smoke test from a clean checkout. Set the local
 licensed bundle root, then use [TEAM_README.md](../../TEAM_README.md) to run the
 CLI or save the CSV plus private manifest. Records include code/config/input
 hashes, environment, seed, runtime and validated output checksum. The final

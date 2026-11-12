@@ -115,6 +115,31 @@ class PipelineTests(unittest.TestCase):
                 predict_match(config={"seed": -1})
             importer.assert_not_called()
 
+    def test_misspelt_config_section_fails_before_loading(self):
+        # Codex review: {"state_machnie": ...} used to run silently with default dwell.
+        with patch("possession.pipeline.load_match") as loader:
+            with self.assertRaisesRegex(ValueError, "state_machnie"):
+                predict_match(config={"state_machnie": {"team_dwell_s": .04}})
+            loader.assert_not_called()
+
+    def test_period_without_any_possession_is_not_exported(self):
+        # Codex review: a half-start gate that never opens would export a whole half as D.
+        match = synthetic_match()
+        for labels, fails in (("XHHXXDDX", True), ("XHHXXDAX", False)):
+            prediction = Prediction(np.array(list(labels)), {})
+            with self.subTest(labels=labels), \
+                    patch.dict(sys.modules, {"possession.state_machine":
+                                             decoder_module(lambda *a, **k: prediction)}), \
+                    patch("possession.pipeline.load_match", return_value=match), \
+                    patch("possession.pipeline.build_features",
+                          return_value=neutral_features(match)), \
+                    patch("possession.pipeline.build_priors", return_value=neutral_priors(match)):
+                if fails:
+                    with self.assertRaisesRegex(RuntimeError, "half 2 is labelled entirely D"):
+                        predict_match()
+                else:
+                    predict_match()
+
     def test_noncallable_decoder_is_actionable(self):
         with patch.dict(sys.modules, {"possession.state_machine": decoder_module(None)}):
             with self.assertRaisesRegex(RuntimeError, "must expose"):

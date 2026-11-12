@@ -23,11 +23,9 @@ team prediction or accuracy improvement is established here.
 
 ## Review branches
 
-E2's [PR #6](https://github.com/algaziev7/more-than-a-hack-2027-team/pull/6)
-contains `possession.state_machine.decode`; inspected revision `9883b4d`.
-It is absent from main. Read E2's handoff on that branch; the
-[merged handoff](owners/belek_isken.md) still describes the older validation-plan
-stage. The unresolved live-play/unknown-team behavior needs E2/E3/E4 agreement.
+E2's decoder (`possession.state_machine.decode`, Decisions 1-11) is merged on
+main via PRs #6, #12, #13 and #18; see [E2's handoff](owners/belek_isken.md).
+The unresolved live-play/unknown-team behavior needs E2/E3/E4 agreement.
 
 [E5 PR #10](https://github.com/algaziev7/more-than-a-hack-2027-team/pull/10)
 (`e5/pipeline-v1`, implementation `6985721`) adds thin loader -> features -> priors -> decoder wiring,
@@ -37,10 +35,12 @@ Missing E2 fails before assets are read. Missing/disabled tags remain supported.
 No shared signatures, fields or configuration sections changed. Hosted synthetic
 CI passed on Ubuntu and Windows for this implementation. See
 [Goblin's handoff](owners/goblin.md) for actual test evidence and next steps.
+Since then the pipeline also rejects unknown top-level configuration sections and
+refuses to export a half that is entirely D.
 
 ## Remaining gates
 
-1. E1 reviews E5; E4 reviews/merges E2. Confirm the combined pipeline on
+1. Done: E5 and E2 are reviewed and merged. Confirm the combined pipeline on
    synthetic inputs. Hosted CI must require no restricted assets or credentials.
 2. An authorised teammate runs the complete system locally and E4 validates
    the exact CSV. A second laptop independently reproduces identical CSV bytes.

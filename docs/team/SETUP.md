@@ -1,8 +1,8 @@
 # E1 setup and input contract
 
 E1's data infrastructure is merged through PR #2. Main also contains E3's
-tagging/stoppage priors and E4's tracking features. E2's decoder remains on its
-review branch; E5's integrated pipeline is absent from this checkout.
+tagging/stoppage priors, E4's tracking features, E2's decoder and E5's
+integrated pipeline.
 The public five minutes are only a pipeline
 sanity check; do not use their scores for training, tuning, or model selection.
 

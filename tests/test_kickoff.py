@@ -9,6 +9,7 @@ import numpy as np
 from possession.contracts import PriorData
 from possession.dead_ball import (
     CONFIRMED_KICKOFF, _kickoff_context, build_priors, summarize_prior_diagnostics,
+    summarize_kickoff_diagnostics,
 )
 from possession.features import build_features
 from tests.test_dead_ball import match_input, control_features
@@ -263,6 +264,82 @@ class KickoffTests(unittest.TestCase):
                         {"kickoff_departure_m": float("nan")}):
             with self.subTest(options=options), self.assertRaises(ValueError):
                 build_priors(match, config={"dead_ball": options})
+
+    def test_diagnostic_stages_use_actual_detector_gates(self):
+        expected = (
+            "NO_START_TAG_CONTEXT", "NO_USABLE_BALL_IN_CONTEXT",
+            "NO_CONFIRMED_CENTRE_SETTLEMENT", "NO_SUSTAINED_MOTION_AFTER_SETTLEMENT",
+            "NO_CONFIRMED_DEPARTURE", "NO_ENDPOINT_CONTROL", "ONE_CONFIRMATION",
+        )
+        for stage in expected:
+            match = kickoff_match()
+            features = control_features(match)
+            if stage == "NO_START_TAG_CONTEXT":
+                match.events = []
+            elif stage == "NO_USABLE_BALL_IN_CONTEXT":
+                hide(match, slice(None))
+            elif stage == "NO_CONFIRMED_CENTRE_SETTLEMENT":
+                match.ball_xy_m[:, 0] += 5
+            elif stage == "NO_SUSTAINED_MOTION_AFTER_SETTLEMENT":
+                match.ball_xy_m[:] = np.asarray(match.pitch_m)/2
+                match.ball_speed_mps[:] = 0
+            elif stage == "NO_CONFIRMED_DEPARTURE":
+                start = int(match.fps)
+                match.ball_xy_m[start:, 0] = match.pitch_m[0]/2 + (
+                    .3 * np.where(np.arange(len(match.frame)-start) % 2, 1, -1))
+            elif stage == "NO_ENDPOINT_CONTROL":
+                features = control_features(match, supported=False)
+            with self.subTest(stage=stage):
+                report = summarize_kickoff_diagnostics(match, features)
+                self.assertEqual(report["periods"]["1"]["stage"], stage)
+
+    def test_diagnostics_preserve_every_prior_and_are_json_serializable(self):
+        import json
+        match = kickoff_match()
+        features = control_features(match)
+        before = build_priors(match, features)
+        report = summarize_kickoff_diagnostics(match, features)
+        after = build_priors(match, features)
+        for field in fields(PriorData):
+            np.testing.assert_array_equal(getattr(before, field.name), getattr(after, field.name))
+        json.dumps(report, allow_nan=False)
+        self.assertEqual(report["periods"]["1"]["confirmed_kickoffs"], 1)
+
+    def test_diagnostics_report_blocked_stop_and_disabled_inference(self):
+        match = kickoff_match()
+        reception = int(2*match.fps)
+        match.ball_xy_m[reception:] = match.ball_xy_m[reception-1]
+        match.ball_speed_mps[reception:] = 0
+        features = control_features(match, supported=False)
+        late = reception + int(.8*match.fps)
+        features.team_evidence[late:] = [.9, .1]
+        features.team_reliability[late:] = .8
+        report = summarize_kickoff_diagnostics(match, features)
+        self.assertEqual(report["periods"]["1"]["stage"], "BLOCKED_BY_CONFIRMED_STOP")
+        disabled = summarize_kickoff_diagnostics(match, features, {"dead_ball": {"enabled": False}})
+        self.assertEqual(disabled, {"enabled": False, "periods": {}})
+
+    def test_local_diagnostic_command_saves_synthetic_report_without_printing_it(self):
+        import contextlib
+        import io
+        import json
+        from pathlib import Path
+        import tempfile
+        from unittest.mock import patch
+        from scripts import diagnose_kickoff as cli
+
+        match = kickoff_match()
+        console = io.StringIO()
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(cli, "ROOT", Path(directory)), \
+                    patch.object(cli, "load_config", return_value={}), \
+                    patch.object(cli, "load_match", return_value=match), \
+                    contextlib.redirect_stdout(console):
+                self.assertEqual(cli.main([]), 0)
+            report = json.loads((Path(directory)/"runs"/"kickoff-gates.json").read_text())
+            self.assertEqual(report["periods"]["1"]["stage"], "ONE_CONFIRMATION")
+        self.assertNotIn("ONE_CONFIRMATION", console.getvalue())
+        self.assertNotIn("confirmed_kickoffs", console.getvalue())
 
 
 if __name__ == "__main__":

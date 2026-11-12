@@ -9,6 +9,32 @@
 
 ## Dedicated kickoff confirmation for PR #18 (2026-11-12)
 
+### Local diagnostic follow-up
+
+- Almaz reports the human-run exactly-one check returned **NO**. The hosted
+  assistant has not inspected restricted inputs or reports. The signal is not
+  ready for E2 activation based on the current evidence. No thresholds changed.
+- Added `summarize_kickoff_diagnostics` using optional counters in the actual
+  detector, and `scripts/diagnose_kickoff.py` for a human terminal. It saves
+  per-period gate/reset counts and a qualitative earliest unmet stage to
+  ignored `runs/kickoff-gates.json`, without printing match diagnostics.
+  No frame IDs or coordinates are returned. Reports still stay local.
+- Gates distinguish absent tag context, unusable observations, settlement,
+  sustained motion, departure, control and contradictory stops. An unmet stage
+  is a debugging lead, not an accuracy result or proven real-match explanation.
+- Verification on Python 3.15.0: **25 kickoff tests; 240 full-suite tests pass**,
+  no skips. Four new tests check stage classification, disabled/blocked cases,
+  serialization/input invariance, and CLI output using mocked synthetic inputs
+  in a temporary directory. No restricted command was run by the assistant.
+  A separate 100-case seeded synthetic comparison against committed `7074c59`
+  matched every PriorData field exactly. `git diff --check` and tabnanny pass.
+- Equivalent pre-commit review checked the added CLI, detector counters,
+  producer/consumer invariants and tests; no blocking finding identified.
+- Next: Almaz runs the new command in a separate local terminal with the actual
+  prediction config, opens the report locally, and shares only half 2's stage.
+  Use the cause to design a general synthetic regression before any behavioral
+  change. E1 interface sign-off and E2 integration remain pending.
+
 ### Belek's review corrections
 
 - Addressed the two requested pre-merge changes from

@@ -166,7 +166,7 @@ def _kickoff_context(events, n):
     return np.cumsum(changes[:-1]) > 0
 
 
-def _kickoff_flags(match, control, settings, usable, still, moving):
+def _kickoff_flags(match, control, settings, usable, still, moving, totals=None):
     """A separate geometric episode, never generic live evidence or final labels.
 
     Missing frames pause observed support within a total per-confirmation budget.
@@ -189,18 +189,37 @@ def _kickoff_flags(match, control, settings, usable, still, moving):
     origin = armed_at = onset = last_control = last_observed = last_motion = None
     for i in range(n):
         half = int(match.half[i])
+        counters = None
+        if totals is not None and half:
+            counters = totals.setdefault(str(half), dict.fromkeys((
+                "context_frames", "observed_context_frames", "usable_context_frames",
+                "centre_slow_frames", "settlement_confirmations",
+                "moving_after_settlement_frames", "motion_dwell_frames",
+                "departure_frames", "control_corroborated_departure_frames",
+                "candidate_pulses", "missing_budget_resets", "rejected_observation_resets",
+                "episode_expiry_resets", "context_loss_resets", "motion_support_resets",
+                "blocked_by_confirmed_stop", "confirmed_kickoffs"), 0))
+            if half == previous_half and not context[i] and (settled or armed_at is not None):
+                counters["context_loss_resets"] += 1
         if half != previous_half or not half or not context[i]:
             settled = count = missing = 0
             origin = armed_at = onset = last_control = last_observed = last_motion = None
         previous_half = half
         if not half or not context[i]:
             continue
+        if counters is not None:
+            counters["context_frames"] += 1
         if not match.ball_observed[i]:
             missing += 1
             if missing > gap_frames:
+                if counters is not None and (settled or armed_at is not None):
+                    counters["missing_budget_resets"] += 1
                 settled = count = 0
                 origin = armed_at = onset = last_control = last_observed = last_motion = None
             continue
+
+        if counters is not None:
+            counters["observed_context_frames"] += 1
 
         in_pitch = np.all(match.ball_xy_m[i] >= 0) and np.all(
             match.ball_xy_m[i] <= np.asarray(match.pitch_m))
@@ -218,17 +237,25 @@ def _kickoff_flags(match, control, settings, usable, still, moving):
             fast = valid and speed >= settings.moving_speed_mps and (
                 not supplied or raw[i] >= settings.moving_speed_mps)
         if not valid:
+            if counters is not None:
+                counters["rejected_observation_resets"] += bool(settled or armed_at is not None)
             settled = count = missing = 0
             origin = armed_at = onset = last_control = last_observed = last_motion = None
             continue
+        if counters is not None:
+            counters["usable_context_frames"] += 1
         last_observed = i
         if control[i]:
             last_control = i
         if slow and radius[i] <= settings.kickoff_centre_radius_m:
+            if counters is not None:
+                counters["centre_slow_frames"] += 1
             settled += 1
             count = 0
             onset = last_motion = None
             if settled >= settle_frames:
+                if counters is not None and armed_at is None:
+                    counters["settlement_confirmations"] += 1
                 origin, armed_at = match.ball_xy_m[i].copy(), i
                 missing = 0
             continue
@@ -237,32 +264,45 @@ def _kickoff_flags(match, control, settings, usable, still, moving):
             missing = 0
             continue
         if i - armed_at > context_frames:
+            if counters is not None:
+                counters["episode_expiry_resets"] += 1
             origin = armed_at = onset = last_motion = None
             count = missing = 0
             continue
         if fast:
+            if counters is not None:
+                counters["moving_after_settlement_frames"] += 1
             if onset is None:
                 onset = i
             count += 1
             last_motion = i
         elif count < motion_frames:
+            if counters is not None and count:
+                counters["motion_support_resets"] += 1
             count = 0
             onset = last_motion = None
         # A settled ball moved to another spot must not bank motion indefinitely.
         corroborated = (onset is not None and last_control is not None
                         and last_control >= onset - control_frames
                         and i - last_control <= control_frames)
-        if (count >= motion_frames and last_motion is not None
-                and i - last_motion <= control_frames and corroborated
-                and radius[i] > settings.kickoff_centre_radius_m
-                and np.linalg.norm(match.ball_xy_m[i] - origin) >= settings.kickoff_departure_m):
+        sustained = (count >= motion_frames and last_motion is not None
+                     and i - last_motion <= control_frames)
+        departed = (sustained and radius[i] > settings.kickoff_centre_radius_m
+                    and np.linalg.norm(match.ball_xy_m[i] - origin) >= settings.kickoff_departure_m)
+        if counters is not None:
+            counters["motion_dwell_frames"] += bool(sustained)
+            counters["departure_frames"] += bool(departed)
+            counters["control_corroborated_departure_frames"] += bool(departed and corroborated)
+        if departed and corroborated:
+            if counters is not None:
+                counters["candidate_pulses"] += 1
             result[i] = True
             settled = count = missing = 0
             origin = armed_at = onset = last_control = last_observed = last_motion = None
     return result
 
 
-def _build_priors(match, features, config, totals=None):
+def _build_priors(match, features, config, totals=None, kickoff_totals=None):
     _validate_inputs(match, features)
     config = {} if config is None else config
     if not isinstance(config, dict):
@@ -317,7 +357,7 @@ def _build_priors(match, features, config, totals=None):
         control = ((features.team_reliability >= .5)
                    & (features.team_evidence.max(axis=1) >= .75))
 
-    kickoff = _kickoff_flags(match, control, settings, usable, still, moving)
+    kickoff = _kickoff_flags(match, control, settings, usable, still, moving, kickoff_totals)
 
     stop_frames = max(1, math.ceil(settings.stop_duration_s * match.fps))
     motion_frames = max(1, math.ceil(settings.motion_duration_s * match.fps))
@@ -418,12 +458,45 @@ def _build_priors(match, features, config, totals=None):
 
     # Do not issue an opening on a frame that also confirms a new stop (for
     # example control first appearing long after the ball settled at reception).
-    kickoff &= ~((out.dead_evidence > .5) & (out.dead_reliability > 0))
+    blocked = kickoff & (out.dead_evidence > .5) & (out.dead_reliability > 0)
+    kickoff &= ~blocked
+    if kickoff_totals is not None:
+        for half, counters in kickoff_totals.items():
+            period = match.half == int(half)
+            counters["blocked_by_confirmed_stop"] = int(np.count_nonzero(blocked & period))
+            counters["confirmed_kickoffs"] = int(np.count_nonzero(kickoff & period))
     out.diagnostic_flags[kickoff] |= CONFIRMED_KICKOFF
     # Validate the complete result using the unchanged shared contract.
     return PriorData(out.dead_evidence, out.dead_reliability, out.restart_evidence,
                      out.tag_team_evidence, out.tag_team_reliability,
                      out.diagnostic_flags)
+
+
+def summarize_kickoff_diagnostics(match, features=None, config=None):
+    """Local-only aggregate gate counts. Never returns frames or coordinates.
+
+    Runs the actual detector with optional counters; no thresholds are changed.
+    Stages identify the earliest unmet prerequisite, not a proven match cause.
+    Keep reports from restricted inputs local, outside hosted tools and Git.
+    """
+    periods = {}
+    _build_priors(match, features, config, kickoff_totals=periods)
+    settings = _section({} if config is None else config, "dead_ball", DeadBallConfig)
+    enabled = settings.enabled and settings.evidence_weight > 0
+    for counters in periods.values():
+        stages = (
+            ("context_frames", "NO_START_TAG_CONTEXT"),
+            ("usable_context_frames", "NO_USABLE_BALL_IN_CONTEXT"),
+            ("settlement_confirmations", "NO_CONFIRMED_CENTRE_SETTLEMENT"),
+            ("motion_dwell_frames", "NO_SUSTAINED_MOTION_AFTER_SETTLEMENT"),
+            ("departure_frames", "NO_CONFIRMED_DEPARTURE"),
+            ("control_corroborated_departure_frames", "NO_ENDPOINT_CONTROL"),
+            ("confirmed_kickoffs", "BLOCKED_BY_CONFIRMED_STOP"),
+        )
+        counters["stage"] = next((reason for field, reason in stages if not counters[field]),
+                                 "ONE_CONFIRMATION" if counters["confirmed_kickoffs"] == 1
+                                 else "MULTIPLE_CONFIRMATIONS")
+    return {"enabled": enabled, "periods": periods}
 
 
 def summarize_prior_diagnostics(match, features=None, config=None):

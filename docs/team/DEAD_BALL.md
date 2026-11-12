@@ -80,6 +80,24 @@ that the existing PR #18 consumes the new bit: it currently does not.
 
 ### Local diagnostic recipe (human terminal only)
 
+If the yes/no check returns no confirmations, run this in a separate local
+terminal with the actual prediction config:
+
+```bash
+python scripts/diagnose_kickoff.py --config configs/input-v1.json
+```
+
+The command uses the detector's actual gates with optional counters, writes
+`runs/kickoff-gates.json`, and prints no match diagnostics. Open that file locally
+and inspect `periods["2"]["stage"]`. Share only that qualitative stage, never
+the report or counts. Stages distinguish absent start-tag context, no usable
+ball, no confirmed centre settlement, no sustained subsequent motion, no clear
+departure, no endpoint control, and a contradictory confirmed stop. The counts
+include reset causes (missing budget, rejected observation, context loss,
+episode expiry and motion pause) to inspect privately. An earliest unmet stage
+is a diagnostic lead, not proof of the real-match cause. Thresholds and labels
+are unchanged. `enabled: false` means the config disabled motion inference.
+
 Run the following on the E3 branch with the same config as the reported PR #18
 run. It writes the opening flags, nearby centre distances, and start-tag
 coverage into an ignored local file. Do not run it through hosted AI tools,

@@ -168,6 +168,10 @@ class DataTests(unittest.TestCase):
             cached = self.load_small(config)
         np.testing.assert_equal(cached.ball_xy_m, first.ball_xy_m)
         np.testing.assert_array_equal(cached.half, first.half)
+        # E2 Decision 10 reads the declared period starts; they must survive the JSON cache.
+        expected = {"1": "live_at_entry", "2": "await_start"}
+        self.assertEqual(first.metadata["period_start"], expected)
+        self.assertEqual(cached.metadata["period_start"], expected)
         changed_config = self.load_small({'data': {'cache': True}, 'seed': 1})
         self.assertNotEqual(first.metadata['cache_key'], changed_config.metadata['cache_key'])
         self.write_rows([ROWS[0].replace('0.5,0.25,4', '0.4,0.25,4'), *ROWS[1:]])

@@ -1,12 +1,12 @@
 # Belek and Isken — Possession state machine
 
 - Owner: Belek and Isken
-- Status: decoder with Decisions 7-9 merged to `main` (PR #13, squash-merged); no E2 task active
-- Branch: none active; `e2/tracking-first-fusion` deleted after the squash-merge
+- Status: Decisions 7-9 on `main` (PR #13); Decision 10 (half-start gate) in review
+- Branch: Belek on `e2/half-start-gate`
 - Reviewer: E4
 - Owned files: possession/state_machine.py; state-machine configuration and tests
 - Current milestone: synthetic decoder validation and E3/export integration
-- Last update: 2026-11-11 (Belek's track, PR #13 merged)
+- Last update: 2026-11-12 (Belek's track, Decision 10)
 
 ## Pair coordination
 
@@ -97,6 +97,23 @@ When E4 features exist, connect them to the synthetic integration slice.
 - Help needed: Belek/E4 behavior review, E3 unknown-team restart discussion,
   E4 feature builder, and E5 pipeline integration. Hidden-match improvement is
   not measured; the public answer window was not used.
+
+## Belek's current task: half-start gate (`e2/half-start-gate`)
+
+Decision 10 in the decision doc. An `await_start` period stays D until E3 confirms play started;
+proximity and tags alone never open it, and the stop safety valve cannot act before the period's
+first possession. E1's `PERIOD_START` in `possession/data.py` declares half 1 `live_at_entry`
+and half 2 `await_start` from FAQ.md (Azamat agreed to the field; documented in INTERFACES.md).
+Test fixtures declare `live_at_entry` centrally, so existing tests keep their meaning; the gate
+has its own tests (Decision 10 lists them) and the reference model mirrors it.
+
+- Tests: 231 pass on Python 3.12.16 (16 new, incl. the await-start exhaustive comparison,
+  which now reaches gate expiry). Mutation check: removing each of the seven gate rules makes at
+  least one test fail. Pre-commit review found that E3 disabled by config pinned await halves in
+  D; the gate is now skipped and reported in that case.
+- Unmeasured: real-match effect. Next: a local smoke run (per half: where the gate opened and why,
+  first possession, no H/A in the published pre-kickoff wait; counts kept local); then review by
+  Almaz (E3 interaction) and Azamat (the E1 field), and send the E3 proposals to Almaz.
 
 ## Belek's last task: tracking-first fusion (PR #13, squash-merged)
 

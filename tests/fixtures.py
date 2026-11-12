@@ -20,7 +20,8 @@ def synthetic_match():
         slot_team=np.array(["H", "A"]),
         events=[{"start_frame": 1, "end_frame": 3, "start_s": .04,
                  "end_s": .12, "code": "BUILD UP", "tags": {"Team": "Barcelona"}}],
-        metadata={"schema_version": 1, "source": "synthetic"},
+        metadata={"schema_version": 1, "source": "synthetic",
+                  "period_start": {"1": "live_at_entry", "2": "live_at_entry"}},
     )
 
 

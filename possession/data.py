@@ -17,6 +17,11 @@ import numpy as np
 from games import GAME, GAMES, asset_paths, half_video_blocks
 from possession.contracts import MatchData, SCHEMA_VERSION
 
+# How each period starts, from the documented grading semantics (FAQ.md, DATA.md): half 1 is
+# graded from its own kickoff, half 2 from before its kickoff. A declared property of the period,
+# never a frame number; E2 keeps an await_start period dead until E3 confirms play started.
+PERIOD_START = {"1": "live_at_entry", "2": "await_start"}
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -287,7 +292,8 @@ def load_match(data_dir=None, config=None, *, cache_dir=None):
         metadata={"schema_version": SCHEMA_VERSION, "game": GAME, "source": "tactical",
                   "asset_sha256": assets, "cache_key": key, "tags_available": bool(tags_available),
                   "ball_speed_source": "raw ATD third field (m/s), masked when position is missing",
-                  "ball_speed_validity": "isfinite(ball_speed_mps)", "imputed": False},
+                  "ball_speed_validity": "isfinite(ball_speed_mps)", "imputed": False,
+                  "period_start": dict(PERIOD_START)},
     )
     if cache_path is not None:
         _write_cache(cache_path, match)

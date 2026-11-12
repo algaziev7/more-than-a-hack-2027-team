@@ -23,8 +23,8 @@ docs/team/decisions/2026-10-23-e2-data-evidence-and-state-machine-design.md. Sum
   then backdated to the start of their latest support run, Decision 8).
 - Dead and team transitions get separate dwell lengths (dead shorter -- stoppages are often
   announced cleanly; team changes need more sustained proof).
-- Every half starts in D. Correct for the second half (graded before its own kickoff); merely
-  harmless for the first (graded live from kickoff) -- see Decision 2.
+- Every half starts in D -- see Decision 2. Since Decision 10, how long it stays D depends on the
+  period's declared start (`match.metadata["period_start"]`): see the Decision 10 bullet below.
 - A frame with no decisive candidate (ball missing, nothing reliable) PAUSES the dwell count, it
   does not reset it. This is Decision 3, found on review before any code existed: resetting on a
   neutral frame is fragile exactly where it matters most, since the ball is missing on 41% of
@@ -63,6 +63,13 @@ docs/team/decisions/2026-10-23-e2-data-evidence-and-state-machine-design.md. Sum
   turnover while it has tracking support inside `evidence_window_s`; and the first team change
   after a restart signal takes the restart frame as its boundary when its support starts within
   `restart_lookahead_s` and no stop or other team came between.
+- Decision 10 (half-start gate): a period declared `await_start` (graded from before its kickoff;
+  also the default when undeclared) stays D until E3 confirms play started (`exit_dead_ok`).
+  Proximity or tags alone never open it, and the stop safety valve cannot act before the
+  period's first possession. An opening lasts `evidence_window_s` after the last live evidence;
+  a stop or that long without fresh live evidence closes it and drops anything pending. A
+  `live_at_entry` period behaves as before, and so does every period when E3 is disabled by
+  config (nothing could ever open the gate). `diagnostics["period_starts"]` reports each half.
 
 `config` follows the same convention as `dead_ball.DeadBallConfig` / `tagging.TaggingConfig`: the
 caller passes the *whole* shared pipeline dict, and this module reads only its own
@@ -229,6 +236,25 @@ def _team_call(evidence, reliability, config):
     return reliable, decisive, signed_margin
 
 
+PERIOD_STARTS = ("live_at_entry", "await_start")
+
+
+def _period_start(match, half_number):
+    """Decision 10: how a period starts, from match.metadata["period_start"] (E1 sets it from the
+    documented grading semantics, keyed by half number as a string). Missing means await_start,
+    the safe choice: without proof play started, proximity cannot create possession."""
+    declared = (getattr(match, "metadata", None) or {}).get("period_start", {})
+    if not isinstance(declared, dict) or not all(
+            isinstance(key, str) and key.isdigit() for key in declared):
+        raise ValueError("match.metadata['period_start'] must map half numbers as strings "
+                         "(e.g. \"1\") to a policy")
+    policy = declared.get(str(half_number), "await_start")
+    if policy not in PERIOD_STARTS:
+        raise ValueError("unknown period_start policy {!r}; expected one of {}".format(
+            policy, PERIOD_STARTS))
+    return policy
+
+
 def _validate_alignment(match, features, priors, half):
     """Reject cross-module timeline mismatches before NumPy can broadcast them.
 
@@ -357,6 +383,9 @@ def decode(match, features, priors, config=None) -> Prediction:
             "dead_ball.evidence_weight ({}) is below state_machine.dead_reliability_min ({}), "
             "so every dead-ball clue would be ignored".format(
                 dead_ball.evidence_weight, settings.dead_reliability_min))
+    # Decision 10: with E3 disabled (an allowed ablation) nothing can ever confirm a kickoff, so the
+    # half-start gate would pin every await_start period in D. Skip the gate and say so instead.
+    e3_off = not dead_ball.enabled or dead_ball.evidence_weight == 0
     half = np.asarray(match.half)
     _validate_alignment(match, features, priors, half)
     # Decision 7: each source must clear team_reliability_min alone, and every tag frame carries
@@ -393,6 +422,8 @@ def decode(match, features, priors, config=None) -> Prediction:
     # Decision 9, restart look-ahead: first restart signal while in D, and the team candidates
     # seen since. A stop, a half change or leaving D clears it.
     restart_at, restart_teams = None, set()
+    # Decision 10: per-period start gate (set at each half change) and its per-half diagnostics.
+    played, awaiting, live_until, half_log = True, False, -1, []
 
     for i in range(n):
         this_half = int(half[i])
@@ -402,6 +433,15 @@ def decode(match, features, priors, config=None) -> Prediction:
             continue
 
         if this_half != previous_half:
+            # Decision 10: how this period starts. A live_at_entry period behaves as before; an
+            # await_start period is graded from before its kickoff, so it stays D until E3 confirms
+            # play started -- proximity alone, however long, never opens it.
+            policy = _period_start(match, this_half)
+            gate_on = policy == "await_start" and not e3_off
+            played = not gate_on
+            awaiting, live_until = gate_on, -1
+            half_log.append({"half": this_half, "policy": policy, "gated": gate_on, "openings": 0,
+                             "closings": 0, "first_possession": None})
             # New half: no memory of the previous one survives. See the design doc's Decision 2
             # for why the reset target is D and why that's only *harmless*, not correct, at the
             # start of the first half.
@@ -439,6 +479,23 @@ def decode(match, features, priors, config=None) -> Prediction:
             restart_at, restart_teams = i, set()
 
         this_candidate = candidate[i]
+        if not played:
+            # Decision 10 gate, until the period's first possession. Live/restart evidence opens it
+            # and keeps it open for evidence_window_s; a stop, or that long without fresh live
+            # evidence, closes it again and drops anything pending, so neither a stray pre-kickoff
+            # movement nor support banked before the opening can confirm a possession later.
+            if exit_dead_ok[i]:
+                half_log[-1]["openings"] += awaiting
+                awaiting, live_until = False, i + settings.evidence_window_frames
+            elif not awaiting and (is_dead[i] or i > live_until):
+                half_log[-1]["closings"] += 1
+                awaiting = True
+            if awaiting:
+                restart_at = None
+                if pending_state in (H, A):
+                    pending_state, pending_frames = None, deque()
+                if this_candidate in (H, A):
+                    this_candidate = None
         # Record every team vote since the restart before protection can hide it: a protected
         # tag still means another team was seen, so the look-ahead must not jump over it.
         if this_candidate in (H, A) and restart_at is not None:
@@ -527,6 +584,11 @@ def decode(match, features, priors, config=None) -> Prediction:
                 "from_state": current_state, "to_state": this_candidate,
                 "reason": "{} decisive occurrences for the new candidate".format(len(pending_frames)),
             })
+            if this_candidate != D and half_log[-1]["first_possession"] is None:
+                half_log[-1]["first_possession"] = int(match.frame[start]) if hasattr(
+                    match, "frame") else start
+            if this_candidate != D:
+                played = True
             if current_state == D and this_candidate != D:
                 # Leaving D, whether via real proof or the safety valve -- don't carry a latch
                 # into the live period that follows. Left set, a later stray is_dead frame would
@@ -544,4 +606,5 @@ def decode(match, features, priors, config=None) -> Prediction:
     team_sources = {name: int(np.count_nonzero(mask & graded)) for name, mask in sources.items()}
     return Prediction(labels=labels, diagnostics={"transitions": transitions,
                                                   "team_sources": team_sources,
-                                                  "protected_tracking_frames": protected})
+                                                  "protected_tracking_frames": protected,
+                                                  "period_starts": half_log})

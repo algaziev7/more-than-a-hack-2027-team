@@ -14,8 +14,12 @@ from possession.contracts import FeatureData, MatchData, PriorData
 from possession.state_machine import decode
 
 
-def evidence_sequence(symbols, *, fps=25., half=None):
-    """Use the real shared contracts; geometry is deliberately unobserved."""
+def evidence_sequence(symbols, *, fps=25., half=None, period_start=None):
+    """Use the real shared contracts; geometry is deliberately unobserved.
+
+    Scenarios assume play is live from each period's first frame unless `period_start` says
+    otherwise (Decision 10); half-start gate tests pass {"1"/"2": "await_start"} explicitly.
+    """
     if set(symbols) - set("HAD.R"):
         raise ValueError("unknown synthetic evidence symbol")
     n = len(symbols)
@@ -26,7 +30,8 @@ def evidence_sequence(symbols, *, fps=25., half=None):
         ball_xy_m=np.full((n, 2), np.nan), ball_observed=np.zeros(n, dtype=bool),
         players_xy_m=np.full((n, 2, 2), np.nan),
         player_observed=np.zeros((n, 2), dtype=bool), slot_team=np.array(["H", "A"]),
-        metadata={"source": "invented E2 evidence"},
+        metadata={"source": "invented E2 evidence",
+                  "period_start": period_start or {"1": "live_at_entry", "2": "live_at_entry"}},
     )
     team = np.full((n, 2), .5)
     reliability = np.zeros(n)

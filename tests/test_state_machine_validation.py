@@ -22,7 +22,7 @@ from tests.e2_scenarios import TIMING_CASES, evidence_sequence, label_transition
 
 
 def grouped_reference(symbols, half, team_required, dead_required, latched_required=None,
-                      lookahead=0):
+                      lookahead=0, period_start=None, window=150):
     """Independent re-derivation of the decode() policy from its prose description.
 
     Through 2026-11-08 this was a purely declarative "group runs, check each run's own length,
@@ -61,6 +61,13 @@ def grouped_reference(symbols, half, team_required, dead_required, latched_requi
     Decision 9 (2026-11-11, ported from PR #16): the first team change after an R while in D is
     moved back to that R when its run starts within `lookahead` symbols and no other team symbol
     came in between; a D symbol, a half change or leaving D clears it. 0 disables it.
+
+    Decision 10 (2026-11-12): `period_start` maps half -> "live_at_entry" (default, matching the
+    evidence_sequence fixture) or "await_start". Until an await_start half has its first team
+    possession, H/A symbols count as nothing unless the gate is open; an R opens it for `window`
+    symbols, and a D or `window` symbols without an R close it again, dropping pending team
+    support and the restart anchor. `window` is also the evidence window that trims old support
+    (as production's evidence_window_s does for both).
     """
     if latched_required is None:
         latched_required = team_required
@@ -70,8 +77,10 @@ def grouped_reference(symbols, half, team_required, dead_required, latched_requi
         if half_id == 0:
             continue
         state, dead_confirmed = "D", False
-        pending_symbol, pending_count, last_support = None, 0, None
+        pending_symbol, pending_count, last_support, support = None, 0, None, []
         restart_at, restart_teams = None, set()
+        played = (period_start or {}).get(str(half_id), "live_at_entry") == "live_at_entry"
+        awaiting, live_until = not played, -1
         for i in indices:
             symbol = symbols[i]
             if symbol == "D":
@@ -93,7 +102,19 @@ def grouped_reference(symbols, half, team_required, dead_required, latched_requi
             elif symbol in "HA" and restart_at is not None:
                 restart_teams.add(symbol)
 
-            candidate = symbol if symbol in "HAD" else None
+            vote = symbol
+            if not played:
+                if symbol == "R":
+                    awaiting, live_until = False, i + window
+                elif not awaiting and (symbol == "D" or i > live_until):
+                    awaiting = True
+                if awaiting:
+                    restart_at = None
+                    if pending_symbol in ("H", "A"):
+                        pending_symbol, pending_count = None, 0
+                    if symbol in "HA":
+                        vote = "."
+            candidate = vote if vote in "HAD" else None
             if candidate is None:
                 labels[i] = state
                 continue
@@ -102,15 +123,21 @@ def grouped_reference(symbols, half, team_required, dead_required, latched_requi
                 labels[i] = state
                 continue
             if candidate == pending_symbol:
-                pending_count += 1
                 if i - last_support > team_required:  # a long unsupported gap breaks the run
                     pending_start = i
+                support.append(i)
             else:
-                pending_count, pending_start = 1, i
+                pending_start, support = i, [i]
             last_support = i
             pending_symbol = candidate
             latched = candidate != "D" and state == "D" and dead_confirmed
             backdate = candidate != "D" and not latched
+            # Support older than the evidence window (the longer latched window while latched) no
+            # longer counts, and the boundary cannot reach before what remains.
+            trim = 2 * latched_required if latched else window
+            while i - support[0] > trim:
+                support.pop(0)
+            pending_count, pending_start = len(support), max(pending_start, support[0])
             if candidate == "D":
                 required = dead_required
             elif latched:
@@ -125,6 +152,8 @@ def grouped_reference(symbols, half, team_required, dead_required, latched_requi
                             and restart_teams <= {candidate}):
                         pending_start = restart_at
                     labels[pending_start:i] = [candidate] * (i - pending_start)
+                if candidate != "D":
+                    played = True
                 if state == "D" and candidate != "D":
                     # Leaving D: don't carry a stale latch into the live period that follows.
                     dead_confirmed = False
@@ -529,14 +558,38 @@ class StateMachineValidationTests(unittest.TestCase):
                 self.assertEqual(result.labels.tolist(), expected, "".join(symbols))
 
     def test_seeded_half_sequences_against_reference(self):
-        rng = np.random.default_rng(20261108)
         config = {"state_machine": {"team_dwell_s": .12, "dead_dwell_s": .08}}
-        for sample in range(200):
-            symbols = rng.choice(list("HAD.R"), 80).tolist()
-            half = [1] * 35 + [0] * 5 + [2] * 40
-            result = decode(*evidence_sequence(symbols, half=half), config)
-            expected = grouped_reference(symbols, half, 3, 2, latched_required=75, lookahead=50)
-            self.assertEqual(result.labels.tolist(), expected, sample)
+        # Decision 10: also with the second half, and both halves, awaiting their kickoff.
+        for policy in ({"1": "live_at_entry", "2": "live_at_entry"},
+                       {"1": "live_at_entry", "2": "await_start"},
+                       {"1": "await_start", "2": "await_start"}):
+            rng = np.random.default_rng(20261108)
+            for sample in range(200):
+                symbols = rng.choice(list("HAD.R"), 80).tolist()
+                half = [1] * 35 + [0] * 5 + [2] * 40
+                result = decode(*evidence_sequence(symbols, half=half, period_start=policy), config)
+                expected = grouped_reference(symbols, half, 3, 2, latched_required=75,
+                                             lookahead=50, period_start=policy)
+                self.assertEqual(result.labels.tolist(), expected, (policy, sample))
+
+    def test_exhaustive_await_start_sequences_against_reference(self):
+        # Decision 10: every sequence up to length 6 over H/A/D/./R in an await_start half, with a
+        # 3-frame window (gate and evidence), so opening, closing by stop and by expiry, and
+        # support trimming all occur; the expiry count guards against a vacuous pass.
+        config = {"state_machine": {"team_dwell_s": .12, "dead_dwell_s": .08,
+                                    "evidence_window_s": .12}}
+        policy = {"1": "await_start"}
+        expiries = 0
+        for length in range(7):
+            for symbols in product("HAD.R", repeat=length):
+                result = decode(*evidence_sequence(symbols, period_start=policy), config)
+                expected = grouped_reference(symbols, [1] * length, 3, 2, latched_required=75,
+                                             lookahead=50, period_start=policy, window=3)
+                self.assertEqual(result.labels.tolist(), expected, "".join(symbols))
+                if length and result.diagnostics["period_starts"][0]["closings"] and "D" not in (
+                        "".join(symbols)):
+                    expiries += 1
+        self.assertGreater(expiries, 100)
 
     def test_team_swap_symmetry_with_conflicting_geometry_and_tags(self):
         rng = np.random.default_rng(42)
@@ -637,6 +690,172 @@ class E2MetricContractTests(unittest.TestCase):
         result = pm.evaluate(labels, labels, bootstrap_n=0)
         self.assertEqual(result["n_pred_spells"], 2)
         self.assertEqual(result["spell_f1_mean"], 1.)
+
+
+
+AWAIT = {"1": "await_start", "2": "await_start"}
+
+
+def _await(symbols, **kwargs):
+    return decode(*evidence_sequence(symbols, period_start=AWAIT, **kwargs))
+
+
+def _kickoff_match(fps, wait_s, missing_s=0., policy="await_start"):
+    """Invented geometry: ball at rest on the centre spot with a home player beside it for
+    `wait_s`, then dribbled away at 3 m/s with that player alongside; the first `missing_s` of
+    the dribble is unobserved. One away player and a second home player stand far off."""
+    from possession.contracts import MatchData
+    wait, missing, play = round(wait_s * fps), round(missing_s * fps), round(3 * fps)
+    n = wait + missing + play
+    centre = np.array([52.5, 34.])
+    t = np.clip(np.arange(n) - wait, 0, None) / fps
+    ball = centre + np.column_stack((3. * t, np.zeros(n)))
+    kicker = ball + np.where((np.arange(n) < wait)[:, None], [-.8, 0.], [0., .5])
+    players = np.stack([kicker, np.tile(centre + [15., 10.], (n, 1)),
+                        np.tile(centre + [-20., -10.], (n, 1))], axis=1)
+    speed = np.where(np.arange(n) < wait, 0., 3.)
+    ball[wait:wait + missing], speed[wait:wait + missing] = np.nan, np.nan
+    return MatchData(
+        frame=np.arange(n, dtype=np.int64), half=np.ones(n, dtype=np.int8), fps=fps,
+        pitch_m=(105., 68.), ball_xy_m=ball, ball_observed=np.isfinite(ball).all(axis=1),
+        players_xy_m=players, player_observed=np.ones((n, 3), dtype=bool),
+        slot_team=np.array(["H", "A", "H"]), ball_speed_mps=speed,
+        metadata={"period_start": {"1": policy}}), wait + missing
+
+
+class HalfStartGateTests(unittest.TestCase):
+    """Decision 10: an await_start period stays D until E3 confirms play started (R)."""
+
+    def test_long_stationary_wait_never_opens_on_proximity(self):
+        # 80 s of a decisive home player beside the ball: far past the team dwell and the 3 s
+        # stop safety valve. Only the R opens the half; the boundary lands on it (Decision 9).
+        result = _await("H" * 2000 + "R" + "H" * 40)
+        self.assertTrue(np.all(result.labels[:2000] == "D"))
+        self.assertEqual(label_transitions(result.labels), [(2000, "D", "H")])
+        # A stop before kickoff must not hand control to the safety valve either.
+        result = _await("D" * 10 + "H" * 500 + "R" + "H" * 40)
+        self.assertEqual(label_transitions(result.labels), [(510, "D", "H")])
+
+    def test_normal_kickoff_opens_on_the_restart_frame(self):
+        result = _await("D" * 100 + "R" + "A" * 40)
+        self.assertEqual(label_transitions(result.labels), [(100, "D", "A")])
+        (log,) = result.diagnostics["period_starts"]
+        self.assertEqual(log, {"half": 1, "policy": "await_start", "gated": True, "openings": 1,
+                               "closings": 0, "first_possession": 100})
+
+    def test_kickoff_with_missing_ball_waits_for_the_signal(self):
+        result = _await("H" * 100 + "." * 40 + "R" + "." * 5 + "H" * 30)
+        self.assertTrue(np.all(result.labels[:140] == "D"))
+        self.assertEqual(label_transitions(result.labels), [(140, "D", "H")])
+
+    def test_evidence_banked_before_kickoff_does_not_count(self):
+        # 500 home frames before the R, then fewer than one dwell after it: no possession.
+        result = _await("H" * 500 + "R" + "H" * 20)
+        self.assertTrue(np.all(result.labels == "D"))
+
+    def test_stray_movement_expires_after_the_evidence_window(self):
+        # One live frame, then 160 frames without fresh live evidence: the opening expires, so
+        # the later home run cannot confirm. A real kickoff afterwards still works.
+        result = _await("H" * 50 + "R" + "." * 160 + "H" * 100)
+        self.assertTrue(np.all(result.labels == "D"))
+        self.assertEqual(result.diagnostics["period_starts"][0]["closings"], 1)
+        result = _await("H" * 50 + "R" + "." * 160 + "H" * 100 + "R" + "H" * 30)
+        self.assertEqual(label_transitions(result.labels), [(311, "D", "H")])
+
+    def test_support_from_an_expired_opening_does_not_carry_over(self):
+        # 20 home frames while the gate is open, then it expires (frame 151); a later R reopens
+        # it. Only the 5 frames after the new opening count, below the 25-frame dwell.
+        result = _await("R" + "." * 120 + "H" * 20 + "." * 15 + "R" + "H" * 5)
+        self.assertTrue(np.all(result.labels == "D"))
+
+    def test_stop_before_first_possession_closes_the_gate_and_the_valve(self):
+        # Without the gate, the stop latch's safety valve would end this stop after 75 frames.
+        result = _await("R" + "D" * 5 + "H" * 100)
+        self.assertTrue(np.all(result.labels == "D"))
+        self.assertEqual(result.diagnostics["period_starts"][0]["closings"], 1)
+
+    def test_a_late_signal_does_not_change_earlier_labels(self):
+        # Codex review: labels before a signal must not depend on whether one arrives later.
+        silent = _await("H" * 300).labels
+        late = _await("H" * 300 + "." * 50 + "R" + "H" * 30).labels
+        self.assertTrue(np.all(silent == "D"))
+        np.testing.assert_array_equal(late[:300], silent)
+
+    def test_unresolved_period_is_reported_not_hidden(self):
+        result = _await("H" * 300)
+        self.assertEqual(result.diagnostics["period_starts"][0]["first_possession"], None)
+
+    def test_the_gate_ends_with_the_first_possession(self):
+        # After the first possession, ordinary rules apply: the safety valve can end a later stop.
+        result = _await("R" + "H" * 40 + "D" * 10 + "A" * 100)
+        self.assertEqual([t[1:] for t in label_transitions(result.labels)],
+                         [("H", "D"), ("D", "A")])
+
+    def test_periods_follow_their_own_policy(self):
+        # Half 1 live at entry, half 2 awaiting: only the second half waits for its signal.
+        half = [1] * 40 + [0] * 5 + [2] * 80
+        policy = {"1": "live_at_entry", "2": "await_start"}
+        result = decode(*evidence_sequence("H" * 40 + "....." + "H" * 40 + "R" + "H" * 39,
+                                           half=half, period_start=policy))
+        self.assertTrue(np.all(result.labels[:40] == "H"))
+        self.assertTrue(np.all(result.labels[45:85] == "D"))
+        self.assertTrue(np.all(result.labels[85:] == "H"))
+        self.assertEqual([log["policy"] for log in result.diagnostics["period_starts"]],
+                         ["live_at_entry", "await_start"])
+
+    def test_missing_policy_means_await_and_unknown_policy_fails(self):
+        match, features, priors = evidence_sequence("H" * 60)
+        match.metadata = {}
+        self.assertTrue(np.all(decode(match, features, priors).labels == "D"))
+        match.metadata = {"period_start": {"1": "kickoff_at_frame_100"}}
+        with self.assertRaisesRegex(ValueError, "period_start"):
+            decode(match, features, priors)
+        # Integer or misspelt keys must fail, not silently fall back to await_start.
+        for bad in ({1: "live_at_entry"}, {"first": "live_at_entry"}):
+            match.metadata = {"period_start": bad}
+            with self.subTest(keys=list(bad)), self.assertRaisesRegex(ValueError, "period_start"):
+                decode(match, features, priors)
+
+    def test_live_half_reports_its_first_possession(self):
+        result = decode(*evidence_sequence("." * 10 + "H" * 30))
+        self.assertEqual(result.diagnostics["period_starts"],
+                         [{"half": 1, "policy": "live_at_entry", "gated": False, "openings": 0,
+                           "closings": 0, "first_possession": 10}])
+
+    def test_gate_is_skipped_when_e3_is_disabled(self):
+        # Review: with E3 off nothing can confirm a kickoff, so gating would pin the half in D.
+        from possession.features import build_features
+        match, kick = _kickoff_match(25., 20.)
+        features = build_features(match)
+        for dead_ball in ({"enabled": False}, {"evidence_weight": 0.}):
+            with self.subTest(**dead_ball):
+                config = {"dead_ball": dead_ball}
+                result = decode(match, features, build_priors(match, features, config), config)
+                (log,) = result.diagnostics["period_starts"]
+                self.assertEqual((log["policy"], log["gated"]), ("await_start", False))
+                self.assertEqual(result.labels[0], "H")
+
+    def test_end_to_end_kickoff_through_e4_and_e3(self):
+        # Almaz: without an earlier stop, E3 needs control plus sustained motion. Through the
+        # real E4 features and E3 priors, at two frame rates, with and without a missed kick.
+        from possession.features import build_features
+        for fps in (25., 50.):
+            for wait_s, missing_s in ((60., 0.), (0.2, 0.), (20., 1.)):
+                with self.subTest(fps=fps, wait_s=wait_s, missing_s=missing_s):
+                    match, kick = _kickoff_match(fps, wait_s, missing_s)
+                    features = build_features(match)
+                    priors = build_priors(match, features)
+                    result = decode(match, features, priors)
+                    self.assertTrue(np.all(result.labels[:kick] == "D"), "no H before the kick")
+                    first = result.diagnostics["period_starts"][0]["first_possession"]
+                    self.assertIsNotNone(first, "E3 must confirm a synthetic kickoff")
+                    self.assertLessEqual(first - kick, round(.5 * fps))
+                    self.assertEqual(result.labels[-1], "H")
+        # The same input declared live at entry keeps today's start: H from the first frame.
+        match, kick = _kickoff_match(25., 60., policy="live_at_entry")
+        features = build_features(match)
+        result = decode(match, features, build_priors(match, features))
+        self.assertEqual(result.labels[0], "H")
 
 
 if __name__ == "__main__":

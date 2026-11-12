@@ -458,6 +458,56 @@ unresolved live play (the scorer fills `X` with the previous label, here `D`, fo
 macroF1 counts it as a miss, so it never beats `D`); backdating stops; the fixed 0.6 s backdating
 cap (about 9 frames late under a 1 s dwell); and a second decode path (every fix twice).
 
+## Decision 10 — half-start gate from declared period semantics (2026-11-12)
+
+**Problem.** FAQ.md: the second half is graded from frame 110,808 but kicks off at 113,742, about
+2,934 graded frames that are truly dead. Proximity at the centre spot could confirm H/A there,
+and backdating then labelled the half from its first frame.
+
+**How the design was chosen.** Almaz (E3) set the conditions: no proximity-based escape, no reuse
+of the stop safety valve, tests for a long stationary wait, a normal kickoff and a missed kick,
+and no hardcoded kickoff frame. Two independent reviews (Claude; Codex, code-only access, no
+data) were compared. A first combined proposal was corrected after Codex showed that opening on
+a `Kick Off` tag window would bypass the restart-threshold safeguard, and that a "gate only if
+the half has any live signal" fallback makes early labels depend on unrelated later signals.
+
+**Rule.** E1 declares each period's start in `MatchData.metadata["period_start"]` from the
+documented grading semantics, never a frame number: half 1 `live_at_entry`, half 2
+`await_start` (`possession/data.py`, `PERIOD_START`). Undeclared means `await_start`. For an
+`await_start` period, until its first possession:
+- team votes (tracking and tags) are paused, so nothing banks toward a possession;
+- only E3's confirmed live-motion or restart signal (`exit_dead_ok`) opens the gate; a bare tag
+  window cannot (the restart-threshold safeguard stays intact);
+- an opening lasts `evidence_window_s` (6 s, reused, not a new parameter) after the last live
+  evidence; a stop or that long without fresh live evidence closes it again and drops pending
+  support and the restart anchor, so stray movement cannot open the half minutes early;
+- the stop safety valve cannot act (a stop closes the gate, and team votes stay paused);
+- the first possession needs the normal dwell after the opening, and Decision 9 places its
+  boundary on the opening frame when it follows within 2 s.
+A `live_at_entry` period, and every period after its first possession, behaves exactly as before.
+With E3 disabled by config (`dead_ball.enabled: false` or `evidence_weight: 0`, an allowed
+ablation) nothing could ever open the gate, so it is skipped and the half reports
+`"gated": false` instead of silently staying D. Period keys must be half numbers as strings;
+integer or misspelt keys fail rather than fall back. `diagnostics["period_starts"]` reports per
+half: declared policy, whether the gate applied, openings, closings, and the first possession.
+
+**Limits (documented, not hidden).** The boundary lands where E3 *confirms* the kick, not on the
+kick itself (E3 has no motion-onset output). If E3 confirms live play but no team evidence
+follows, the label stays D: the existing live-but-unknown-team policy, unchanged here. If E3 never
+confirms the second-half kickoff, that half stays D until it does, and diagnostics report it.
+E3-side improvements (kickoff detection using `Kick Off` tags as context, centre geometry only in
+that context, the motion counter resetting on missed ball frames) are proposed to Almaz.
+
+**Tests.** Isken's reference model gained the gate and the ordinary evidence-window trimming it
+had lacked; it agrees with the decoder on every sequence up to length 6 over H/A/D/./R in an
+awaiting half with a 3-frame window (over 100 of them close only by expiry), and on 600 seeded
+two-half sequences under three policies. Dedicated tests cover Almaz's three cases, banked support, stray movement
+expiring, support from an expired opening, a stop before the first possession, a late signal not
+changing earlier labels, mixed policies across halves, validation, and an end-to-end kickoff
+through real E4 features and E3 priors at 25 and 50 fps, the E3-disabled fallback, key
+validation, and the loader emitting `period_start` through its cache. Removing any one of the
+seven gate rules makes at least one test fail. Real-match effect: not yet measured.
+
 ## Explicitly deferred (not forgotten, not yet needed)
 
 - No vectorization of the per-frame loop — 199k frames is cheap in plain Python; confirmed at

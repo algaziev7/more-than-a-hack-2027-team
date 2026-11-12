@@ -531,6 +531,70 @@ def summarize_kickoff_diagnostics(match, features=None, config=None):
     return {"enabled": enabled, "periods": periods}
 
 
+def summarize_kickoff_coverage(match, check_frame, config=None):
+    """Human-only coverage check; the check frame is never used by inference.
+
+    Returns local aggregate counts and categories, no positions or frame IDs.
+    The surrounding window reuses restart_context_s solely for diagnostics.
+    A missing observation at the check does not prove the kick was unobserved.
+    """
+    _validate_inputs(match, None)
+    if (isinstance(check_frame, bool) or not isinstance(check_frame, (int, np.integer))
+            or not 0 <= check_frame < len(match.frame) or match.half[check_frame] == 0):
+        raise ValueError("check frame must be an integer inside a graded period")
+    settings = _section({} if config is None else config, "dead_ball", DeadBallConfig)
+    context = _kickoff_context(match.events, len(match.frame))
+    half = match.half[check_frame]
+    period_start, period_end = int(check_frame), int(check_frame) + 1
+    while period_start > 0 and match.half[period_start-1] == half:
+        period_start -= 1
+    while period_end < len(match.frame) and match.half[period_end] == half:
+        period_end += 1
+    offset = match.ball_xy_m - np.asarray(match.pitch_m)/2
+    near = match.ball_observed & (
+        np.hypot(offset[:, 0], offset[:, 1]) <= settings.kickoff_centre_radius_m)
+    _, slow, _, _ = _motion(match, settings)
+    # Find the beginning of the connected tag window that covers the check.
+    tag_start = int(check_frame)
+    if context[check_frame]:
+        while tag_start > period_start and context[tag_start-1]:
+            tag_start -= 1
+        before_tag = slice(period_start, tag_start)
+        if np.any(near[before_tag] & slow[before_tag]):
+            pre_tag = "SLOW_CENTRE_OBSERVED_BEFORE_TAG"
+        elif np.any(near[before_tag]):
+            pre_tag = "CENTRE_OBSERVED_BEFORE_TAG"
+        else:
+            pre_tag = "NO_CENTRE_OBSERVATION_BEFORE_TAG"
+    else:
+        before_tag = slice(period_start, period_start)
+        pre_tag = "CHECK_NOT_IN_START_TAG"
+    radius_frames = math.ceil(settings.restart_context_s * match.fps)
+    window = slice(max(period_start, check_frame-radius_frames),
+                   min(period_end, check_frame+radius_frames+1))
+    observed = int(np.count_nonzero(match.ball_observed[window]))
+    near_count = int(np.count_nonzero(near[window]))
+    if not observed:
+        window_category = "BALL_MISSING_THROUGH_CHECK_WINDOW"
+    elif near_count:
+        window_category = "CENTRE_OBSERVED_IN_CHECK_WINDOW"
+    else:
+        window_category = "BALL_OBSERVED_AWAY_FROM_CENTRE_IN_CHECK_WINDOW"
+    return {
+        "tag_coverage": "TAG_COVERS_CHECK" if context[check_frame] else "TAG_MISSES_CHECK",
+        "pre_tag_centre": pre_tag,
+        "check_observation": "BALL_OBSERVED_AT_CHECK" if match.ball_observed[check_frame]
+        else "BALL_MISSING_AT_CHECK",
+        "window_observation": window_category,
+        "counts": {
+            "observed_in_check_window": observed,
+            "centre_observed_in_check_window": near_count,
+            "centre_observed_before_tag": int(np.count_nonzero(near[before_tag])),
+            "slow_centre_before_tag": int(np.count_nonzero(near[before_tag] & slow[before_tag])),
+        },
+    }
+
+
 def summarize_prior_diagnostics(match, features=None, config=None):
     """Return totals only; never frame IDs, arrays, paths, tags, or metadata.
 

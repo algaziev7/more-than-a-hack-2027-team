@@ -110,6 +110,16 @@ whether requiring the full settlement inside a tag window is an unsuitable
 assumption, without expanding a radius, speed threshold or tag window to fit
 this match.
 
+To distinguish centre observations before the tag from observation gaps around
+a published kickoff, pass `--check-frame` to the diagnostic command. This input
+is used only by `summarize_kickoff_coverage`, after normal inference has finished;
+it never enters detector settings or changes predictions. The readable summary
+then gives tag coverage, pre-tag centre coverage within the same continuous
+period, ball observation at the check, and coverage in a surrounding window
+using the existing `restart_context_s`. A missing sample at the check does not
+prove the kick itself was unobserved, and nearby observations do not establish
+the referee's decision. Inspect counts privately and share only categories.
+
 Run the following on the E3 branch with the same config as the reported PR #18
 run. It writes the opening flags, nearby centre distances, and start-tag
 coverage into an ignored local file. Do not run it through hosted AI tools,

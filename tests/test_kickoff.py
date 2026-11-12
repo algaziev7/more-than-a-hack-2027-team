@@ -10,6 +10,7 @@ from possession.contracts import PriorData
 from possession.dead_ball import (
     CONFIRMED_KICKOFF, _kickoff_context, build_priors, summarize_prior_diagnostics,
     summarize_kickoff_diagnostics,
+    summarize_kickoff_coverage,
 )
 from possession.features import build_features
 from tests.test_dead_ball import match_input, control_features
@@ -351,6 +352,62 @@ class KickoffTests(unittest.TestCase):
         report = summarize_kickoff_diagnostics(match, features)
         self.assertEqual(report["periods"]["2"]["slow_centre_before_tag_frames"], 0)
 
+    def test_coverage_check_finds_settlement_before_tag_without_changing_inference(self):
+        match = kickoff_match()
+        check = int(match.fps)
+        match.events[0]["start_frame"] = check
+        features = control_features(match)
+        before = build_priors(match, features)
+        report = summarize_kickoff_coverage(match, check)
+        self.assertEqual(report["tag_coverage"], "TAG_COVERS_CHECK")
+        self.assertEqual(report["pre_tag_centre"], "SLOW_CENTRE_OBSERVED_BEFORE_TAG")
+        self.assertEqual(report["window_observation"], "CENTRE_OBSERVED_IN_CHECK_WINDOW")
+        after = build_priors(match, features)
+        for field in fields(PriorData):
+            np.testing.assert_array_equal(getattr(before, field.name), getattr(after, field.name))
+        self.assertEqual(len(pulses(match, features)), 0)
+
+    def test_coverage_check_distinguishes_occlusion_and_observed_ball_away_from_centre(self):
+        match = kickoff_match()
+        check = int(match.fps)
+        hide(match, [check])
+        report = summarize_kickoff_coverage(match, check)
+        self.assertEqual(report["check_observation"], "BALL_MISSING_AT_CHECK")
+        self.assertEqual(report["window_observation"], "CENTRE_OBSERVED_IN_CHECK_WINDOW")
+        hide(match, slice(None))
+        report = summarize_kickoff_coverage(match, check)
+        self.assertEqual(report["window_observation"], "BALL_MISSING_THROUGH_CHECK_WINDOW")
+        match = kickoff_match()
+        match.ball_xy_m[:, 0] += 5
+        report = summarize_kickoff_coverage(match, check)
+        self.assertEqual(report["pre_tag_centre"], "NO_CENTRE_OBSERVATION_BEFORE_TAG")
+        self.assertEqual(report["window_observation"],
+                         "BALL_OBSERVED_AWAY_FROM_CENTRE_IN_CHECK_WINDOW")
+
+    def test_coverage_check_does_not_borrow_observations_across_half_boundary(self):
+        match = kickoff_match()
+        start = int(match.fps)
+        match.half[start:] = 2
+        match.ball_xy_m[start:, 0] += 5
+        match.events[0]["start_frame"] = start+1
+        report = summarize_kickoff_coverage(match, start+2)
+        self.assertEqual(report["pre_tag_centre"], "NO_CENTRE_OBSERVATION_BEFORE_TAG")
+        self.assertEqual(report["window_observation"],
+                         "BALL_OBSERVED_AWAY_FROM_CENTRE_IN_CHECK_WINDOW")
+
+    def test_coverage_check_rejects_invalid_checks_and_handles_missing_tag(self):
+        match = kickoff_match()
+        for check in (-1, len(match.frame), True, 1.5):
+            with self.subTest(check=check), self.assertRaises(ValueError):
+                summarize_kickoff_coverage(match, check)
+        match.half[0] = 0
+        with self.assertRaises(ValueError):
+            summarize_kickoff_coverage(match, 0)
+        match.events = []
+        report = summarize_kickoff_coverage(match, int(match.fps))
+        self.assertEqual(report["tag_coverage"], "TAG_MISSES_CHECK")
+        self.assertEqual(report["pre_tag_centre"], "CHECK_NOT_IN_START_TAG")
+
     def test_diagnostics_report_blocked_stop_and_disabled_inference(self):
         match = kickoff_match()
         reception = int(2*match.fps)
@@ -382,10 +439,14 @@ class KickoffTests(unittest.TestCase):
                     patch.object(cli, "load_match", return_value=match), \
                     contextlib.redirect_stdout(console):
                 self.assertEqual(cli.main([]), 0)
+                self.assertEqual(cli.main(["--check-frame", str(int(match.fps))]), 0)
             report = json.loads((Path(directory)/"runs"/"kickoff-gates.json").read_text())
             self.assertEqual(report["periods"]["1"]["stage"], "ONE_CONFIRMATION")
             summary = (Path(directory)/"runs"/"kickoff-summary.txt").read_text()
-            self.assertEqual(summary.strip(), "Half 1: ONE_CONFIRMATION")
+            self.assertTrue(summary.startswith("Half 1: ONE_CONFIRMATION\n"))
+            self.assertIn("tag_coverage: TAG_COVERS_CHECK", summary)
+            self.assertNotIn("counts", summary)
+            self.assertIn("coverage_check", report)
         self.assertNotIn("ONE_CONFIRMATION", console.getvalue())
         self.assertNotIn("confirmed_kickoffs", console.getvalue())
 

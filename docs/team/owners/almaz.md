@@ -11,6 +11,23 @@
 
 ### Local diagnostic follow-up
 
+- Added a human-only `--check-frame` coverage option, isolated from inference.
+  It checks the connected start-tag window covering the supplied diagnostic
+  frame, centre observations earlier in that same period, and ball/centre
+  coverage around the check using the existing restart-context duration.
+  It writes qualitative categories to the readable summary and keeps counts
+  in ignored JSON. No published frame is hardcoded in inference or settings.
+- Verification: **31 kickoff tests; 246 full-suite tests pass** on Python 3.15.0.
+  Added synthetic pre-tag settlement, single-sample/long occlusion, observed-away
+  geometry, half isolation and invalid-check cases. The CLI test exercises both
+  default and optional coverage modes. The coverage check leaves every prior
+  field unchanged. Equivalent pre-commit review and `git diff --check` pass.
+  No restricted input or report was inspected by the assistant.
+- Next human step: run the diagnostic CLI with the published kickoff supplied
+  only as `--check-frame`, then share the coverage-check categories, not counts.
+  This resolves the geometry/context/observation ambiguity before changing the
+  detector. E1 sign-off and E2 integration still remain pending.
+
 - Added a settlement-detail breakdown after Almaz's qualitative local result
   indicated the settlement prerequisite was unmet. Diagnostic-only counts now
   separate observed/usable centre positions from stillness, and look for slow

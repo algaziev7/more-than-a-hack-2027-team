@@ -83,6 +83,28 @@ that the existing PR #18 consumes the new bit: it currently does not.
 
 ### Local diagnostic recipe (human terminal only)
 
+For a single consolidated investigation, use `scripts/debug_kickoff.py` with
+the actual run config and a published `--check-frame` used only for inspection.
+It loads once and connects source metadata audit, actual E4 -> E3 -> current
+decoder inference, detector gate counters, tag coverage, and selected tracking
+snapshots with motion/control/label evidence. It writes three files beneath
+ignored `runs/kickoff-debug/`:
+
+- `private-report.html`: offline pitch viewer and timeline slider, with source
+  declarations, tag windows, generic signals, kickoff pulses, detector gates,
+  ball/player observations and quality evidence. No network requests.
+- `private-report.json`: private detailed evidence, config and decoder trace.
+- `shareable-summary.txt`: allowlisted qualitative categories only, no counts,
+  frames, positions, team traces, config, or private source paths.
+
+Only share the last file. Do not upload the HTML/JSON or screenshots of them to
+hosted tools. Display samples are bounded and missing balls remain missing.
+The report explicitly flags a checkout that lacks the half-start gate;
+`exit_dead_ok` is generic evidence, not proof an actual gate opened. It does not
+simulate unmerged PR #18 or tune thresholds. Input alignment declarations do
+not establish physical tracking accuracy. Existing focused diagnostics below
+remain available, but this command replaces repeated one-off investigation steps.
+
 Before changing geometric tolerances, verify the raw input declarations locally:
 
 ```bash

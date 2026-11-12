@@ -11,6 +11,24 @@
 
 ### Local diagnostic follow-up
 
+- Consolidated the investigation in `scripts/debug_kickoff.py`: source audit,
+  actual E4/E3/current decoder inference, tag windows, detector gates, generic
+  opening predicates, dedicated pulses and local pitch/timeline snapshots.
+  It saves private HTML/JSON and an allowlisted qualitative summary under
+  ignored `runs/kickoff-debug/`. No network or prediction/threshold changes.
+- Explicitly distinguishes generic opening evidence from actual decoder gate
+  traces; this branch's decoder does not include unmerged #18. A check frame
+  affects diagnostics only, after inference finishes. No match files/reports
+  were inspected in the hosted session. The speculative controlled-pass route
+  remains unimplemented; no new kickoff algorithm is claimed here.
+- Verification: **254 full-suite tests pass** on Python 3.15.0. Three new tests
+  run the complete command with synthetic sources, check missing-ball handling,
+  label invariance, check markers, qualitative-summary privacy and HTML script
+  escaping. Equivalent pre-commit review and `git diff --check` pass.
+- Next: Almaz runs the consolidated command in a separate local terminal,
+  inspects the private HTML locally, and shares only `shareable-summary.txt`.
+  Full-match tracking accuracy and the half-start fix remain unverified.
+
 - Added a synthetic full loader -> E4 -> E3 coordinate regression at 25/50 fps:
   normalized `(0.5, 0.5)` survives actual parsing as the metre pitch centre and
   produces a kickoff pulse. No conversion error was found for this declared

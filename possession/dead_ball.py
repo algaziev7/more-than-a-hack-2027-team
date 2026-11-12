@@ -19,6 +19,7 @@ STOP_OUTSIDE_AND_STILL = 16
 LIVE_MOTION = 32
 CONFIRMED_RESTART = 64
 UNUSABLE_BALL = 128
+CONFIRMED_KICKOFF = 256
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,10 @@ class DeadBallConfig:
     restart_context_s: float = 3.0
     max_missing_gap_s: float = 0.0
     evidence_weight: float = 0.5
+    kickoff_centre_radius_m: float = 1.0
+    kickoff_departure_m: float = 1.5
+    kickoff_control_window_s: float = 1.0
+    kickoff_max_missing_gap_s: float = 0.2
 
     def __post_init__(self):
         if type(self.enabled) is not bool:
@@ -57,6 +62,12 @@ class DeadBallConfig:
             raise ValueError("dead_ball.evidence_weight must be in [0, 1]")
         if not 0 <= self.max_missing_gap_s <= self.stop_duration_s:
             raise ValueError("max_missing_gap_s must be between zero and stop_duration_s")
+        if not 0 < self.kickoff_centre_radius_m < self.kickoff_departure_m:
+            raise ValueError("kickoff radii must satisfy 0 < centre < departure")
+        if self.kickoff_control_window_s <= 0:
+            raise ValueError("kickoff control window must be positive")
+        if self.kickoff_max_missing_gap_s < 0:
+            raise ValueError("kickoff missing gap must be nonnegative")
 
 
 def _section(config, name, cls):
@@ -137,6 +148,117 @@ def build_priors(match, features=None, config=None) -> PriorData:
     return _build_priors(match, features, config)
 
 
+def _kickoff_context(events, n):
+    """Only start-kickoff tags provide context; duplicates never add strength."""
+    changes = np.zeros(n + 1, dtype=np.int64)
+    normalise = lambda value: " ".join(str(value).casefold().split())
+    for event in events:
+        if normalise(event.get("code", "")) != "set pieces":
+            continue
+        kinds = {normalise(value) for key, value in (event.get("tags") or {}).items()
+                 if normalise(key) == "type"}
+        if kinds == {"kick off (start)"}:
+            changes[event["start_frame"]] += 1
+            changes[event["end_frame"]] -= 1
+    return np.cumsum(changes[:-1]) > 0
+
+
+def _kickoff_flags(match, control, settings, usable, still, moving):
+    """A separate geometric episode, never generic live evidence or final labels.
+
+    Missing frames pause observed support within a total per-confirmation budget.
+    Bounded cross-gap displacement checks reacquisition; it never fills positions.
+    Control at either endpoint suffices. Reception may confirm after motion ends.
+    """
+    n = len(match.frame)
+    result = np.zeros(n, dtype=bool)
+    context = _kickoff_context(match.events, n)
+    centre = np.asarray(match.pitch_m) / 2
+    offset = match.ball_xy_m - centre
+    radius = np.hypot(offset[:, 0], offset[:, 1])
+    settle_frames = max(1, math.ceil(settings.stop_duration_s * match.fps))
+    motion_frames = max(1, math.ceil(settings.motion_duration_s * match.fps))
+    gap_frames = math.floor(settings.kickoff_max_missing_gap_s * match.fps)
+    control_frames = math.ceil(settings.kickoff_control_window_s * match.fps)
+    context_frames = math.ceil(settings.restart_context_s * match.fps)
+    previous_half = 0
+    settled = count = missing = 0
+    origin = armed_at = onset = last_control = last_observed = last_motion = None
+    for i in range(n):
+        half = int(match.half[i])
+        if half != previous_half or not half or not context[i]:
+            settled = count = missing = 0
+            origin = armed_at = onset = last_control = last_observed = last_motion = None
+        previous_half = half
+        if not half or not context[i]:
+            continue
+        if not match.ball_observed[i]:
+            missing += 1
+            if missing > gap_frames:
+                settled = count = 0
+                origin = armed_at = onset = last_control = last_observed = last_motion = None
+            continue
+
+        in_pitch = np.all(match.ball_xy_m[i] >= 0) and np.all(
+            match.ball_xy_m[i] <= np.asarray(match.pitch_m))
+        valid, slow, fast = usable[i] and in_pitch, still[i], moving[i]
+        if last_observed is not None and i > last_observed + 1:
+            speed = (np.linalg.norm(match.ball_xy_m[i] - match.ball_xy_m[last_observed])
+                     * match.fps / (i - last_observed))
+            raw = match.ball_speed_mps
+            supplied = raw is not None and np.isfinite(raw[i])
+            # Cross-gap speed is only available inside the bounded missing budget.
+            valid = (in_pitch and speed <= settings.max_ball_speed_mps
+                     and (not supplied or raw[i] <= settings.max_ball_speed_mps))
+            slow = valid and speed <= settings.stationary_speed_mps and (
+                not supplied or raw[i] <= settings.stationary_speed_mps)
+            fast = valid and speed >= settings.moving_speed_mps and (
+                not supplied or raw[i] >= settings.moving_speed_mps)
+        if not valid:
+            settled = count = missing = 0
+            origin = armed_at = onset = last_control = last_observed = last_motion = None
+            continue
+        last_observed = i
+        if control[i]:
+            last_control = i
+        if slow and radius[i] <= settings.kickoff_centre_radius_m:
+            settled += 1
+            count = 0
+            onset = last_motion = None
+            if settled >= settle_frames:
+                origin, armed_at = match.ball_xy_m[i].copy(), i
+                missing = 0
+            continue
+        settled = 0
+        if armed_at is None:
+            missing = 0
+            continue
+        if i - armed_at > context_frames:
+            origin = armed_at = onset = last_motion = None
+            count = missing = 0
+            continue
+        if fast:
+            if onset is None:
+                onset = i
+            count += 1
+            last_motion = i
+        elif count < motion_frames:
+            count = 0
+            onset = last_motion = None
+        # A settled ball moved to another spot must not bank motion indefinitely.
+        corroborated = (onset is not None and last_control is not None
+                        and last_control >= onset - control_frames
+                        and i - last_control <= control_frames)
+        if (count >= motion_frames and last_motion is not None
+                and i - last_motion <= control_frames and corroborated
+                and radius[i] > settings.kickoff_centre_radius_m
+                and np.linalg.norm(match.ball_xy_m[i] - origin) >= settings.kickoff_departure_m):
+            result[i] = True
+            settled = count = missing = 0
+            origin = armed_at = onset = last_control = last_observed = last_motion = None
+    return result
+
+
 def _build_priors(match, features, config, totals=None):
     _validate_inputs(match, features)
     config = {} if config is None else config
@@ -191,6 +313,8 @@ def _build_priors(match, features, config, totals=None):
         # Moderate, explicit starting cutoffs; these are not calibrated odds.
         control = ((features.team_reliability >= .5)
                    & (features.team_evidence.max(axis=1) >= .75))
+
+    kickoff = _kickoff_flags(match, control, settings, usable, still, moving)
 
     stop_frames = max(1, math.ceil(settings.stop_duration_s * match.fps))
     motion_frames = max(1, math.ceil(settings.motion_duration_s * match.fps))
@@ -289,6 +413,10 @@ def _build_priors(match, features, config, totals=None):
                 out.diagnostic_flags[frame] |= CONFIRMED_RESTART
                 restart_emitted = True
 
+    # Do not issue an opening on a frame that also confirms a new stop (for
+    # example control first appearing long after the ball settled at reception).
+    kickoff &= ~((out.dead_evidence > .5) & (out.dead_reliability > 0))
+    out.diagnostic_flags[kickoff] |= CONFIRMED_KICKOFF
     # Validate the complete result using the unchanged shared contract.
     return PriorData(out.dead_evidence, out.dead_reliability, out.restart_evidence,
                      out.tag_team_evidence, out.tag_team_reliability,
@@ -312,6 +440,8 @@ def summarize_prior_diagnostics(match, features=None, config=None):
     live = (priors.dead_evidence < .5) & (priors.dead_reliability > 0) & active
     totals["confirmed_stop_frames"] = int(stop.sum())
     totals["confirmed_live_frames"] = int(live.sum())
+    totals["confirmed_kickoffs"] = int(np.count_nonzero(
+        priors.diagnostic_flags & CONFIRMED_KICKOFF))
     if motion_enabled and len(match.frame):
         totals["usable_without_confirmed_stop_frames"] = (
             totals["ball_usable_frames"] - totals["confirmed_stop_frames"])

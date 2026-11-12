@@ -1,11 +1,61 @@
 # Almaz — Event tags and stoppages
 
 - Owner: Almaz
-- Status: priors merged via PR #5; PR #11 review correction verified; ready for E2/E4 re-review
-- Branch: `e3/prior-coverage-diagnostics`
+- Status: PR #11 merged; dedicated kickoff signal implemented, E2/E4 review required
+- Branch: `e3/kickoff-confirmation`, based on main `fd7e6a4`
 - Reviewer: Beks and Belek/Isken; Azamat for shared types
-- Files: `possession/dead_ball.py`, its tests, and related docs
-- Last update: 2026-11-11
+- Files: `possession/dead_ball.py`, `tests/test_kickoff.py`, and related E3 docs
+- Last update: 2026-11-12
+
+## Dedicated kickoff confirmation for PR #18 (2026-11-12)
+
+- Implemented E3 option A on an isolated task worktree; shared main and other
+  owners' worktrees are unchanged. `CONFIRMED_KICKOFF = 256` is an additive bit
+  in existing `PriorData.diagnostic_flags`, proposed in DEAD_BALL.md before
+  implementation. No shared dataclass/signature or E2 implementation changed.
+- A `SET PIECES` / `Type=Kick Off (Start)` context must contain observed centre
+  settlement, sustained departure, and bounded E4 control at kick/reception.
+  One pulse per episode begins at confirmation, never at a tag boundary or a
+  published match frame. Generic numeric priors and ordinary restart bits are
+  unchanged, including their current missing-frame behavior.
+- Kickoff-specific missing tolerance counts only observed support; both
+  individual and repeated gaps are bounded by a cumulative pending budget.
+  Reacquisition is checked against elapsed displacement, with/without raw speed.
+  Long gaps, rejected samples, half changes, lost context and expiry reset it.
+  A confirmed stop prevents a contradictory kickoff pulse.
+- Added four explicit untuned settings: centre radius 1 m, departure displacement
+  1.5 m, endpoint-control window 1 s, missing budget 0.2 s. Existing E3 dwell,
+  speed, control cutoffs and restart context are reused. Values are engineering
+  hypotheses, not chosen from the competition match or public labels.
+- Added `event_counts.confirmed_kickoffs` to aggregate prior diagnostics and a
+  human-terminal-only recipe in [DEAD_BALL.md](../DEAD_BALL.md) for investigating
+  the generic opening signal, approach/departure, and start-tag coverage. The
+  recipe writes restricted details to ignored runs/ and was syntax-checked only.
+- Verification: Python 3.15.0, existing pinned temporary environment:
+  `python -m unittest discover -s tests -q`: **234 pass**, no skips;
+  19 new kickoff tests include both 25/50 fps, actual E4 geometry, stationary
+  wait, centre approach, kick/reception control, exact gap timing, total-budget
+  exhaustion, missing raw speed, missing tags/control/settlement, tag boundaries,
+  half/reset/outlier cases, conflicting stop, disabled E3, numeric invariance,
+  team-swap/mirror invariance, duplicate tags and validation.
+  A gap-reset mutation fails the exact-confirmation regression as intended.
+  `git diff --check`: pass. Documented Python recipes parse without execution.
+- Equivalent pre-commit review used `.claude/agents/pre-commit-reviewer.md`:
+  reviewed the complete E3 change, producer contracts and decoder consumer;
+  fixed a possible contradictory stop/kickoff pulse and strengthened the gap
+  test. No remaining E3 blocking finding identified. Owner integration review
+  remains required; this is not approval of PR #18.
+- No competition assets, extracts, public answer labels, local model outputs or
+  restricted-data jobs were used. Real opening flags, ball trajectory and tag
+  coverage remain unverified. Python 3.12 and real-match accuracy are unverified.
+- **Exact next step:** Belek/Beks review the new signal semantics and defaults.
+  Belek changes PR #18's awaiting-period opening/refresh to this bit, clears its
+  latch and pending support on confirmation, bounds first-possession backdating,
+  and resolves its disabled-E3 bypass against the agreed fail-closed policy.
+  E5/E2 then run combined E4 -> E3 -> E2 synthetic tests for both period types
+  at 25/50 fps. A human teammate runs the diagnostic recipe locally with the
+  actual run config, keeps details local, and shares only conclusions. Do not
+  claim the half-start issue fixed until the consumer change and local check.
 
 ## Current follow-up: E2's low dead-ball coverage report
 

@@ -1,5 +1,155 @@
 # Almaz's stoppage and restart clues
 
+## Kickoff signal proposal for PR #18 (E2/E4 review required)
+
+E3 proposes `CONFIRMED_KICKOFF = 256` in the existing `diagnostic_flags`.
+It means an observed centre settlement followed by sustained departure and
+bounded endpoint control, within a `SET PIECES` / `Type=Kick Off (Start)`
+window. It is distinct from generic live movement and ordinary restarts.
+E2 should use this bit alone to open an awaiting period; generic numeric
+priors retain their existing meanings. No shared dataclass or signature changes
+are proposed. This semantic addition needs Belek/Beks review before merge.
+The E2 consumer change belongs in PR #18 and is not implemented here.
+
+### Implemented E3 candidate
+
+`build_priors` now emits that bit once per qualifying settlement/departure
+episode, at confirmation, without changing the numeric priors, the ordinary
+restart flags, or final labels. `summarize_prior_diagnostics` adds
+`event_counts.confirmed_kickoffs`. The detector does not read period policies;
+E2 owns deciding when a period requires this evidence.
+
+The complete episode must lie inside a start-kickoff tag window. Type and code
+matching ignore case and surrounding/repeated whitespace. Missing tags,
+conflicting Type variants, and `Kick Off (After Goal)` do not qualify. Duplicate
+windows do not strengthen the signal. A tag alone cannot confirm anything.
+
+The candidate requires:
+
+- `ceil(stop_duration_s * fps)` observed slow frames within
+  `kickoff_centre_radius_m` of the pitch centre (default 1 m).
+- At least `ceil(motion_duration_s * fps)` observed moving frames, departure
+  beyond that centre region, and displacement of `kickoff_departure_m` from
+  the last settled position (default 1.5 m).
+- E4 control using the existing reliability >= 0.5 and team support >= 0.75
+  cutoffs, within `kickoff_control_window_s` (default 1 s) of the motion onset
+  and confirmation, or at reception. Control need not persist throughout a pass.
+- Confirmation within `restart_context_s` of the last observed settlement.
+  Sustained stillness at the centre refreshes settlement. A new confirmed stop
+  at reception prevents a late kickoff pulse.
+
+The new 1 m / 1.5 m bounds separate a local settlement region from a clear
+departure; the 1 s control window bounds stale corroboration. These are explicit
+engineering hypotheses, not settings chosen from the competition match or
+labels. They require owner review and remain unvalidated on real inputs.
+
+Kickoff confirmation alone tolerates up to
+`floor(kickoff_max_missing_gap_s * fps)` missing frames in total during pending
+confirmation (default 0.2 s). Missing frames emit no kickoff bit and contribute
+no observed support. Reacquisition must have credible cross-gap displacement;
+without raw speed this endpoint displacement can support an observed reacquired
+frame, but never fills unseen frames. Conflicting supplied speed cannot count
+as motion. Excessive total missing time, rejected positions/speeds, half changes,
+and lost tag context clear the episode. Ordinary live-motion gap behavior is
+unchanged; this fixes the kickoff-specific failure without changing other stops.
+
+The defaults deliberately fail closed when tags, settlement, or control are
+missing. This may miss the real kickoff. Centre settlement followed by a
+controlled pre-match repositioning can still resemble a kickoff; geometry and
+automatic tags cannot establish the referee's decision. No real-match accuracy
+claim follows from synthetic success.
+
+### E2 integration required before claiming a half-start fix
+
+Belek should consume `priors.diagnostic_flags & CONFIRMED_KICKOFF` while awaiting
+the period's first possession (None flags mean no confirmation). Generic
+`exit_dead_ok` must not open or refresh this gate. On an accepted kickoff,
+clear the stop latch, discard pre-opening team support, and anchor the earliest
+first-possession boundary at that confirmation frame. This matters when missing
+ball frames prevent generic live evidence: the new bit is sufficient opening
+proof even if numeric dead/live priors are neutral. A confirmed stop must still
+cancel an opening. Keep normal dwell, expiry, and ordinary stop behavior after
+the first possession. Disabled E3 must not silently bypass an awaiting period;
+that behavior in PR #18 differs from the original agreed fail-closed policy.
+
+E2/E4 review this semantic addition and jointly test their decoder change at
+25 and 50 fps: stationary wait, approach-centre-and-settle, actual departure,
+missing ball, repeated false openings, expiry, late boundaries, disabled E3,
+unknown team, and mixed period policies. E3's standalone tests cannot establish
+that the existing PR #18 consumes the new bit: it currently does not.
+
+### Local diagnostic recipe (human terminal only)
+
+Run the following on the E3 branch with the same config as the reported PR #18
+run. It writes the opening flags, nearby centre distances, and start-tag
+coverage into an ignored local file. Do not run it through hosted AI tools,
+paste its output into chat, or commit the report. Enter the published kickoff
+only for the coverage check; it is never passed into `build_priors`.
+`first_generic_signal` reconstructs the first PR #18 opening predicate for
+each awaiting half; it is not a kickoff classification. Inspect the distance
+sequence locally to distinguish approach/settlement from departure.
+
+```bash
+python - <<'PY'
+import json
+from dataclasses import replace
+from pathlib import Path
+import numpy as np
+from scripts.predict import load_config
+from possession.data import load_match
+from possession.features import build_features
+from possession.dead_ball import (
+    build_priors, _kickoff_context, LIVE_MOTION, CONFIRMED_RESTART,
+    CONFIRMED_KICKOFF,
+)
+from possession.state_machine import StateMachineConfig, _decisive_state_per_frame
+
+config = load_config("configs/input-v1.json")
+match = load_match(config=config)
+features = build_features(match, config)
+priors = build_priors(match, features, config)
+settings = replace(StateMachineConfig(**config.get("state_machine", {})), fps=match.fps)
+_, _, generic, _ = _decisive_state_per_frame(features, priors, settings)
+context = _kickoff_context(match.events, len(match.frame))
+centre = np.asarray(match.pitch_m)/2
+distance = np.linalg.norm(match.ball_xy_m-centre, axis=1)
+report = []
+for half in (1, 2):
+    found = np.flatnonzero(generic & (match.half == half))
+    opening = int(found[0]) if len(found) else None
+    item = {"half": half, "first_generic_signal": opening,
+            "kickoff_confirmations": np.flatnonzero(
+                (priors.diagnostic_flags & CONFIRMED_KICKOFF != 0)
+                & (match.half == half)).tolist()}
+    if opening is not None:
+        flags = int(priors.diagnostic_flags[opening])
+        item.update(live_motion=bool(flags & LIVE_MOTION),
+                    restart_pulse=bool(flags & CONFIRMED_RESTART),
+                    start_tag_covers_opening=bool(context[opening]))
+        nearby = range(max(0, opening-int(2*match.fps)),
+                       min(len(match.frame), opening+int(2*match.fps)+1))
+        item["nearby_centre_distances_m"] = [
+            {"frame": i, "distance": float(distance[i]) if np.isfinite(distance[i]) else None}
+            for i in nearby if match.half[i] == half]
+    report.append(item)
+# Optional check only. Never insert this value into detector settings.
+import os
+check_frame = os.environ.get("MTAH_KICKOFF_CHECK_FRAME")
+coverage = None if check_frame is None else bool(context[int(check_frame)])
+path = Path("runs/kickoff-diagnostic.json")
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(json.dumps({"periods": report, "start_tag_covers_check_frame": coverage},
+                           indent=2, allow_nan=False) + "\n", encoding="utf-8")
+print("Diagnostic saved locally; inspect it outside hosted AI tools.")
+PY
+```
+
+The report checks tag coverage at the opening and, optionally, at the published
+kickoff. It does not assert that the whole intervening wait is covered. Inspect
+the tag windows locally if those two checks differ or the signal is missing.
+Share only the qualitative conclusion with Belek. Never choose thresholds to
+make a detected boundary coincide with the published kickoff.
+
 `possession/dead_ball.py` adds movement-based clues to the existing event tags.
 It returns Azamat's `PriorData`, ready for Belek and Isken's state machine.
 The state machine still decides the final H, A, D, or X labels.

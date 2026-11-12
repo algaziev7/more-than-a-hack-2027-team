@@ -1,0 +1,245 @@
+"""Invented kickoff episodes; no match assets, annotations or published timings."""
+
+import copy
+import unittest
+from dataclasses import fields
+
+import numpy as np
+
+from possession.contracts import PriorData
+from possession.dead_ball import CONFIRMED_KICKOFF, build_priors, summarize_prior_diagnostics
+from possession.features import build_features
+from tests.test_dead_ball import match_input, control_features
+
+
+def kickoff_match(fps=25.):
+    n = int(5 * fps)
+    match = match_input(n=n, fps=fps)
+    centre = np.asarray(match.pitch_m) / 2
+    match.ball_xy_m[:] = centre
+    start = int(fps)
+    match.ball_xy_m[start:, 0] += np.arange(1, n - start + 1) * 3 / fps
+    match.ball_speed_mps[start:] = 3.
+    match.events = [{"start_frame": 0, "end_frame": n, "code": "SET PIECES",
+                     "tags": {"Type": "Kick Off (Start)", "Team": "N/A"}}]
+    match.players_xy_m[:, 0, :] = match.ball_xy_m
+    match.players_xy_m[:, 0, 0] += .2
+    match.players_xy_m[:, 1, :] = match.ball_xy_m
+    match.players_xy_m[:, 1, 0] += 10
+    return match
+
+
+def pulses(match, features=None, config=None):
+    prior = build_priors(match, features, config)
+    return np.flatnonzero(prior.diagnostic_flags & CONFIRMED_KICKOFF)
+
+
+def hide(match, indices):
+    match.ball_xy_m[indices] = np.nan
+    match.ball_observed[indices] = False
+    if match.ball_speed_mps is not None:
+        match.ball_speed_mps[indices] = np.nan
+
+
+class KickoffTests(unittest.TestCase):
+    def test_long_stationary_wait_never_confirms(self):
+        for fps in (25., 50.):
+            match = kickoff_match(fps)
+            match.ball_xy_m[:] = np.asarray(match.pitch_m) / 2
+            match.ball_speed_mps[:] = 0
+            self.assertEqual(len(pulses(match, control_features(match))), 0)
+
+    def test_approach_centre_then_settle_is_not_kickoff(self):
+        for fps in (25., 50.):
+            match = kickoff_match(fps)
+            start, end = int(fps), int(3 * fps)
+            centre = np.asarray(match.pitch_m) / 2
+            match.ball_xy_m[:] = centre
+            match.ball_xy_m[:start, 0] -= 6
+            match.ball_xy_m[start:end, 0] -= 6 - np.arange(1, end-start+1)*3/fps
+            match.ball_speed_mps[:] = 0
+            match.ball_speed_mps[start:end] = 3
+            self.assertEqual(len(pulses(match, control_features(match))), 0)
+
+    def test_normal_kickoff_through_real_features_at_both_fps(self):
+        for fps in (25., 50.):
+            match = kickoff_match(fps)
+            found = pulses(match, build_features(match))
+            self.assertEqual(len(found), 1)
+            self.assertGreaterEqual(found[0], int(fps))
+            self.assertLess(found[0], int(2*fps))
+
+    def test_control_at_kick_only_suffices(self):
+        for fps in (25., 50.):
+            match = kickoff_match(fps)
+            features = control_features(match, supported=False)
+            start = int(fps)
+            features.team_evidence[start] = [.9, .1]
+            features.team_reliability[start] = .8
+            self.assertEqual(len(pulses(match, features)), 1)
+
+    def test_control_at_stationary_reception_can_confirm(self):
+        for fps in (25., 50.):
+            match = kickoff_match(fps)
+            reception = int(2*fps)
+            match.ball_xy_m[reception:] = match.ball_xy_m[reception-1]
+            match.ball_speed_mps[reception:] = 0
+            features = control_features(match, supported=False)
+            features.team_evidence[reception] = [.9, .1]
+            features.team_reliability[reception] = .8
+            np.testing.assert_array_equal(pulses(match, features), [reception])
+
+    def test_missing_motion_frames_pause_observed_support(self):
+        for fps in (25., 50.):
+            for raw_speed in (True, False):
+                match = kickoff_match(fps)
+                if not raw_speed:
+                    match.ball_speed_mps = None
+                # Confirmation must include support from before the gaps, rather
+                # than merely succeeding on a later uninterrupted run.
+                start = int(fps)
+                hide(match, [start+4, start+9, start+14])
+                found = pulses(match, control_features(match),
+                               {"dead_ball": {"motion_duration_s": .6}})
+                np.testing.assert_array_equal(found, [start + int(.6*fps) + 2])
+                self.assertTrue(match.ball_observed[found[0]])
+
+    def test_long_gap_loses_settlement_and_cannot_open_on_reacquisition(self):
+        for fps in (25., 50.):
+            match = kickoff_match(fps)
+            hide(match, np.arange(int(fps), int(1.5*fps)))
+            self.assertEqual(len(pulses(match, control_features(match))), 0)
+
+    def test_no_context_no_control_or_no_settlement_never_confirms(self):
+        for variant in ("no_tags", "after_goal", "no_control", "no_settlement", "outside"):
+            match = kickoff_match()
+            features = control_features(match)
+            if variant == "no_tags":
+                match.events = []
+            elif variant == "after_goal":
+                match.events[0]["tags"]["Type"] = "Kick Off (After Goal)"
+            elif variant == "no_control":
+                features = control_features(match, supported=False)
+            elif variant == "no_settlement":
+                match.ball_xy_m[:, 0] += np.arange(len(match.frame)) * .12
+                match.ball_speed_mps[:] = 3
+            else:
+                match.ball_xy_m[:, 1] = -1
+            self.assertEqual(len(pulses(match, features)), 0, variant)
+
+    def test_context_window_is_half_open_and_cannot_supply_boundary(self):
+        match = kickoff_match()
+        match.events[0]["end_frame"] = int(match.fps)
+        self.assertEqual(len(pulses(match, control_features(match))), 0)
+        match = kickoff_match()
+        match.events[0]["start_frame"] = int(match.fps)
+        self.assertEqual(len(pulses(match, control_features(match))), 0)
+
+    def test_short_motion_and_stale_control_do_not_confirm(self):
+        match = kickoff_match()
+        start = int(match.fps)
+        match.ball_xy_m[start+2:] = match.ball_xy_m[start+1]
+        match.ball_speed_mps[start+2:] = 0
+        self.assertEqual(len(pulses(match, control_features(match))), 0)
+        match = kickoff_match()
+        features = control_features(match, supported=False)
+        features.team_evidence[0] = [.9, .1]
+        features.team_reliability[0] = .8
+        # Move departure later without introducing a contradictory position jump.
+        match.ball_xy_m[:] = np.asarray(match.pitch_m)/2
+        match.ball_xy_m[50:, 0] += np.arange(1, len(match.frame)-49)*.12
+        match.ball_speed_mps[:50] = 0
+        self.assertEqual(len(pulses(match, features)), 0)
+
+    def test_repeated_small_gaps_exhaust_total_motion_budget(self):
+        match = kickoff_match()
+        start = int(match.fps)
+        hide(match, np.arange(start+2, start+20, 3))
+        found = pulses(match, control_features(match),
+                       {"dead_ball": {"motion_duration_s": 1.}})
+        self.assertEqual(len(found), 0)
+
+    def test_all_missing_departure_and_stationary_reacquisition_do_not_confirm(self):
+        match = kickoff_match()
+        start = int(match.fps)
+        hide(match, np.arange(start, len(match.frame)))
+        self.assertEqual(len(pulses(match, control_features(match))), 0)
+        match = kickoff_match()
+        hide(match, [start, start+1])
+        match.ball_xy_m[start+2:] = match.ball_xy_m[start+2]
+        match.ball_speed_mps[start+2:] = 0
+        self.assertEqual(len(pulses(match, control_features(match))), 0)
+
+    def test_late_control_after_confirmed_stop_cannot_issue_opening(self):
+        match = kickoff_match()
+        reception = int(2*match.fps)
+        match.ball_xy_m[reception:] = match.ball_xy_m[reception-1]
+        match.ball_speed_mps[reception:] = 0
+        features = control_features(match, supported=False)
+        late = reception + int(.8*match.fps)
+        features.team_evidence[late:] = [.9, .1]
+        features.team_reliability[late:] = .8
+        self.assertEqual(len(pulses(match, features)), 0)
+
+    def test_mirroring_and_swapping_teams_preserve_confirmation(self):
+        match = kickoff_match()
+        expected = pulses(match, build_features(match))
+        match.ball_xy_m[:] = np.asarray(match.pitch_m) - match.ball_xy_m
+        match.players_xy_m[:] = np.asarray(match.pitch_m) - match.players_xy_m
+        match.slot_team[:] = ["A", "H"]
+        np.testing.assert_array_equal(pulses(match, build_features(match)), expected)
+
+    def test_half_reset_and_rejected_observation_drop_episode(self):
+        for variant in ("half", "rejected", "cross_gap_jump"):
+            match = kickoff_match()
+            start = int(match.fps)
+            if variant == "half":
+                match.half[start:] = 2
+            elif variant == "rejected":
+                match.ball_speed_mps[start] = 100
+            else:
+                hide(match, [start])
+                match.ball_xy_m[start+1:, 0] += 20
+            self.assertEqual(len(pulses(match, control_features(match))), 0, variant)
+
+    def test_disabled_and_zero_weight_emit_no_kickoff(self):
+        match = kickoff_match()
+        for settings in ({"enabled": False}, {"evidence_weight": 0}):
+            self.assertEqual(len(pulses(match, control_features(match),
+                                        {"dead_ball": settings})), 0)
+
+    def test_generic_priors_and_inputs_unchanged_by_kickoff_context(self):
+        match = kickoff_match()
+        features = control_features(match)
+        before = copy.deepcopy(match)
+        left = build_priors(match, features)
+        # Generic set-piece semantics are identical for this alternate tag type.
+        match.events[0]["tags"]["Type"] = "Throw-in"
+        right = build_priors(match, features)
+        for field in fields(PriorData):
+            if field.name != "diagnostic_flags":
+                np.testing.assert_array_equal(getattr(left, field.name), getattr(right, field.name))
+        np.testing.assert_array_equal(left.diagnostic_flags & ~CONFIRMED_KICKOFF,
+                                      right.diagnostic_flags)
+        np.testing.assert_array_equal(match.ball_xy_m, before.ball_xy_m)
+        self.assertEqual(len(pulses(before, features)), 1)
+        report = summarize_prior_diagnostics(before, features)
+        self.assertEqual(report["event_counts"]["confirmed_kickoffs"], 1)
+
+    def test_duplicate_and_normalised_context_does_not_multiply_pulses(self):
+        match = kickoff_match()
+        match.events *= 2
+        match.events[0]["tags"] = {" TYPE ": "  KICK OFF (START) "}
+        self.assertEqual(len(pulses(match, control_features(match))), 1)
+
+    def test_settings_validation(self):
+        match = kickoff_match()
+        for options in ({"kickoff_centre_radius_m": 0}, {"kickoff_departure_m": .5},
+                        {"kickoff_control_window_s": 0}, {"kickoff_max_missing_gap_s": -.1},
+                        {"kickoff_departure_m": float("nan")}):
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                build_priors(match, config={"dead_ball": options})
+
+
+if __name__ == "__main__":
+    unittest.main()

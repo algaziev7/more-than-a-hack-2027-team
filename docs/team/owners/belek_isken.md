@@ -119,6 +119,9 @@ has its own tests (Decision 10 lists them) and the reference model mirrors it.
   second keeps one copy). Almaz confirmed locally (yes/no) that the half-2 tag does not cover the
   early opening. Tests: 236 pass on Python 3.12.16 (5 new, incl. 5 tag cases end to end at 25/50 fps, plus the exhaustive comparison rerun
   with a tag); four mutations of the rule each fail a test.
+- Almaz's review (E3, approves the policy): the tag search now stays inside the current
+  contiguous block of the period, with a regression test. Smoke result unaffected (two
+  contiguous halves).
 - Next: Belek's local smoke run of the final branch (half 1 unchanged; half 2 first possession no
   earlier than before; counts kept local); then review by Almaz, Beks and Azamat (INTERFACES).
 

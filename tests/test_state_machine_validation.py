@@ -920,6 +920,13 @@ class HalfStartGateTests(unittest.TestCase):
         self.assertEqual(result.labels[40], "H")
         self.assertEqual([log["start_tag"] for log in result.diagnostics["period_starts"]],
                          [False, True])
+        # Almaz: nor does one in a later disconnected block of the same half number.
+        symbols, half = "R" + "H" * 40 + "." * 5 + "R" + "H" * 40, [1] * 41 + [0] * 5 + [1] * 41
+        untagged = decode(*evidence_sequence(symbols, half=half, period_start=AWAIT))
+        result = self._tagged(symbols, 70, 80, half=half)
+        np.testing.assert_array_equal(result.labels[:41], untagged.labels[:41])
+        self.assertEqual([log["start_tag"] for log in result.diagnostics["period_starts"]],
+                         [False, True])
 
     def test_live_at_entry_periods_ignore_start_tags(self):
         match, features, priors = evidence_sequence("H" * 40)

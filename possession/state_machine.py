@@ -449,7 +449,10 @@ def decode(match, features, priors, config=None) -> Prediction:
             # Decision 11: no opening before this period's first start-tag frame. No tag in the
             # period (or one that ended before it) means no restriction, never a closed half.
             # `start_tag` reports whether a tag restricted this period (always False ungated).
-            tagged = np.flatnonzero(start_tag[i:] & (half[i:] == this_half)) if gate_on else []
+            # Search only this contiguous block: the decoder restarts at every block (Almaz).
+            other = half[i:] != this_half
+            block = start_tag[i:i + (int(other.argmax()) if other.any() else len(other))]
+            tagged = np.flatnonzero(block) if gate_on else []
             opens_from = i + int(tagged[0]) if len(tagged) else i
             half_log.append({"half": this_half, "policy": policy, "gated": gate_on,
                              "start_tag": bool(len(tagged)), "openings": 0, "closings": 0,

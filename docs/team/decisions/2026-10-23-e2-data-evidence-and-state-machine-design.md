@@ -524,7 +524,9 @@ frame inside a `SET PIECES` / `Type=Kick Off (Start)` tag window can neither ope
 gate. From that frame on, Decision 10 applies unchanged (expiry, no banking, no backdating before
 the opening). The tag only forbids an opening; it never establishes live play. The tag windows
 come from E3's own parser (`dead_ball._kickoff_context`, copied unchanged from PR #19), read from
-`match.events`. `diagnostics["period_starts"]` adds `start_tag` per half.
+`match.events`. `diagnostics["period_starts"]` adds `start_tag` per half. The search covers only
+the current contiguous block of the period, since the decoder restarts at every block (Almaz's
+review: a tag in a later disconnected block of the same half number must not change this one).
 
 **Policy for the cases Almaz asked about.**
 - Missing kickoff confirmation (PR #19's bit 256): not consumed, nothing depends on it.

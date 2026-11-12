@@ -47,7 +47,7 @@ positions for P track slots in each of N frames. `bool` means true or false.
 | slot_team | [P]: H or A for each slot; unknown mappings cause an error |
 | ball_speed_mps | Optional float [N]: speed, with source and validity explained |
 | events | Event dictionaries with frame times, code, and tags |
-| metadata | Format version and source information; private run details stay local. `period_start` maps each half (as a string, `"1"`/`"2"`) to `live_at_entry` (play is live from the period's first graded frame) or `await_start` (graded from before its kickoff); missing means `await_start`. Set from documented grading semantics, never a frame number (E2 Decision 10). For an `await_start` period, E2 also reads `events` (`SET PIECES` / `Type=Kick Off (Start)`): no opening before the period's first tagged frame; no such tag means no restriction (E2 Decision 11) |
+| metadata | Format version and source information; private run details stay local. `period_start` maps each half (as a string, `"1"`/`"2"`) to `live_at_entry` (play is live from the period's first graded frame) or `await_start` (graded from before its kickoff); missing means `await_start`. Set from documented grading semantics, never a frame number (E2 Decision 10). For an `await_start` period, E2 also reads `events` (`SET PIECES` / `Type=Kick Off (Start)`): no opening before the period's first tagged frame in its current contiguous block; no such tag means no restriction (E2 Decision 11) |
 
 Reuse the starter loaders where useful. Loading tracking should not require
 reading videos. Do not include the answer file in this input.

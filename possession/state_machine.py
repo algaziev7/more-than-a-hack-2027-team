@@ -70,6 +70,9 @@ docs/team/decisions/2026-10-23-e2-data-evidence-and-state-machine-design.md. Sum
   a stop or that long without fresh live evidence closes it and drops anything pending. A
   `live_at_entry` period behaves as before, and so does every period when E3 is disabled by
   config (nothing could ever open the gate). `diagnostics["period_starts"]` reports each half.
+- Decision 11: in an `await_start` period, live evidence before its first `SET PIECES` /
+  `Kick Off (Start)` tag frame is ignored (it can neither open nor refresh the gate); the tag only
+  forbids an opening, it never proves play started. No such tag in the period: no restriction.
 
 `config` follows the same convention as `dead_ball.DeadBallConfig` / `tagging.TaggingConfig`: the
 caller passes the *whole* shared pipeline dict, and this module reads only its own
@@ -84,7 +87,7 @@ import math
 import numpy as np
 
 from possession.contracts import Prediction
-from possession.dead_ball import DeadBallConfig
+from possession.dead_ball import DeadBallConfig, _kickoff_context
 from possession.tagging import TaggingConfig
 
 # Params
@@ -424,6 +427,9 @@ def decode(match, features, priors, config=None) -> Prediction:
     restart_at, restart_teams = None, set()
     # Decision 10: per-period start gate (set at each half change) and its per-half diagnostics.
     played, awaiting, live_until, half_log = True, False, -1, []
+    # Decision 11: frames inside a SET PIECES / Kick Off (Start) tag window (E3's own parser).
+    start_tag = _kickoff_context(getattr(match, "events", None) or [], n)
+    opens_from = 0
 
     for i in range(n):
         this_half = int(half[i])
@@ -440,8 +446,14 @@ def decode(match, features, priors, config=None) -> Prediction:
             gate_on = policy == "await_start" and not e3_off
             played = not gate_on
             awaiting, live_until = gate_on, -1
-            half_log.append({"half": this_half, "policy": policy, "gated": gate_on, "openings": 0,
-                             "closings": 0, "first_possession": None})
+            # Decision 11: no opening before this period's first start-tag frame. No tag in the
+            # period (or one that ended before it) means no restriction, never a closed half.
+            # `start_tag` reports whether a tag restricted this period (always False ungated).
+            tagged = np.flatnonzero(start_tag[i:] & (half[i:] == this_half)) if gate_on else []
+            opens_from = i + int(tagged[0]) if len(tagged) else i
+            half_log.append({"half": this_half, "policy": policy, "gated": gate_on,
+                             "start_tag": bool(len(tagged)), "openings": 0, "closings": 0,
+                             "first_possession": None})
             # New half: no memory of the previous one survives. See the design doc's Decision 2
             # for why the reset target is D and why that's only *harmless*, not correct, at the
             # start of the first half.
@@ -484,7 +496,8 @@ def decode(match, features, priors, config=None) -> Prediction:
             # and keeps it open for evidence_window_s; a stop, or that long without fresh live
             # evidence, closes it again and drops anything pending, so neither a stray pre-kickoff
             # movement nor support banked before the opening can confirm a possession later.
-            if exit_dead_ok[i]:
+            # Decision 11: live evidence before the start tag can neither open nor refresh it.
+            if exit_dead_ok[i] and i >= opens_from:
                 half_log[-1]["openings"] += awaiting
                 awaiting, live_until = False, i + settings.evidence_window_frames
             elif not awaiting and (is_dead[i] or i > live_until):

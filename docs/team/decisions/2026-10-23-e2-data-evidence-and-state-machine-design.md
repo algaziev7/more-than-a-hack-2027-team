@@ -508,6 +508,48 @@ through real E4 features and E3 priors at 25 and 50 fps, the E3-disabled fallbac
 validation, and the loader emitting `period_start` through its cache. Removing any one of the
 seven gate rules makes at least one test fail. Real-match effect: not yet measured.
 
+## Decision 11 — no half-start opening before the period's start tag (2026-11-12)
+
+**Problem.** A local smoke run of Decision 10 showed the gate opening long before the published
+second-half kickoff: E3's generic live signal fires on pre-kickoff ball movement. Almaz
+reproduced the mechanism synthetically (a player dribbles the ball to the spot, it rests, no
+kickoff yet). His E3 investigation (PR #19) ruled out the stricter fixes for now: a dedicated
+centre-settlement kickoff signal did not fire on the real half (no qualifying centre
+observations), field-line projection looked unreliable enough that a 1 m centre test is not
+defensible, and a controlled-pass detector also accepts a synthetic preparatory pass. Gating on
+any of them alone would leave the whole half D.
+
+**Rule.** In an `await_start` period, live evidence (`exit_dead_ok`) before the period's first
+frame inside a `SET PIECES` / `Type=Kick Off (Start)` tag window can neither open nor refresh the
+gate. From that frame on, Decision 10 applies unchanged (expiry, no banking, no backdating before
+the opening). The tag only forbids an opening; it never establishes live play. The tag windows
+come from E3's own parser (`dead_ball._kickoff_context`, copied unchanged from PR #19), read from
+`match.events`. `diagnostics["period_starts"]` adds `start_tag` per half.
+
+**Policy for the cases Almaz asked about.**
+- Missing kickoff confirmation (PR #19's bit 256): not consumed, nothing depends on it.
+- No start tag in the period, or one that ends before its graded frames, or only other kick-off
+  types: no restriction (Decision 10 as before). Failing closed would pin the whole half in D.
+- A tag that ends early or late: no effect; only its start is used.
+- E3 disabled: the gate stays skipped (`"gated": false`), a comparison setting, never the release.
+
+**Limits.** A tag that starts before the real kickoff still allows an early opening within its
+lead time; one that starts after it delays the first possession by that lateness. Local check
+(Almaz, yes/no only): the half-2 start tag does not cover the early generic opening the smoke
+run found. No threshold or frame was chosen from the match; the published kickoff is a pipeline
+check only.
+
+**Tests.** The reference model gained the rule, and the exhaustive await-start comparison runs
+again with a start tag (it ends before most openings, so only its start matters). Dedicated
+tests: live evidence before the tag cannot open, only the tag start matters, a missing / earlier
+/ other-kind / next-period tag does not restrict, `live_at_entry` ignores tags. End to end
+through E4 and E3 at 25 and 50 fps, Almaz's dribble-to-the-spot case with the tag missing (early
+opening, reported), starting in the wait (the approach is stale evidence: no H before the kick),
+ending before the kick, starting after it (no H before the tag start, boundary clamped there),
+and starting before the approach (the documented limit). Pending support and the restart anchor
+are dropped on every frame before eligibility, as Almaz asked. Each of four mutations of the rule
+fails at least one test. Real-match effect: not yet measured.
+
 ## Explicitly deferred (not forgotten, not yet needed)
 
 - No vectorization of the per-frame loop — 199k frames is cheap in plain Python; confirmed at

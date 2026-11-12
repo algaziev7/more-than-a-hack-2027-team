@@ -22,7 +22,7 @@ from tests.e2_scenarios import TIMING_CASES, evidence_sequence, label_transition
 
 
 def grouped_reference(symbols, half, team_required, dead_required, latched_required=None,
-                      lookahead=0, period_start=None, window=150):
+                      lookahead=0, period_start=None, window=150, tag_start=None):
     """Independent re-derivation of the decode() policy from its prose description.
 
     Through 2026-11-08 this was a purely declarative "group runs, check each run's own length,
@@ -68,6 +68,9 @@ def grouped_reference(symbols, half, team_required, dead_required, latched_requi
     symbols, and a D or `window` symbols without an R close it again, dropping pending team
     support and the restart anchor. `window` is also the evidence window that trims old support
     (as production's evidence_window_s does for both).
+
+    Decision 11 (2026-11-12): an R before `tag_start` (the first Kick Off (Start) tag symbol of
+    an awaiting half; None means no tag) neither opens nor refreshes the gate. Single-half use.
     """
     if latched_required is None:
         latched_required = team_required
@@ -104,7 +107,7 @@ def grouped_reference(symbols, half, team_required, dead_required, latched_requi
 
             vote = symbol
             if not played:
-                if symbol == "R":
+                if symbol == "R" and (tag_start is None or i >= tag_start):
                     awaiting, live_until = False, i + window
                 elif not awaiting and (symbol == "D" or i > live_until):
                     awaiting = True
@@ -578,18 +581,27 @@ class StateMachineValidationTests(unittest.TestCase):
         # support trimming all occur; the expiry count guards against a vacuous pass.
         config = {"state_machine": {"team_dwell_s": .12, "dead_dwell_s": .08,
                                     "evidence_window_s": .12}}
+        # Decision 11: again with a one-frame start tag at frame 2, which ends before most Rs.
         policy = {"1": "await_start"}
         expiries = 0
-        for length in range(7):
-            for symbols in product("HAD.R", repeat=length):
-                result = decode(*evidence_sequence(symbols, period_start=policy), config)
-                expected = grouped_reference(symbols, [1] * length, 3, 2, latched_required=75,
-                                             lookahead=50, period_start=policy, window=3)
-                self.assertEqual(result.labels.tolist(), expected, "".join(symbols))
-                if length and result.diagnostics["period_starts"][0]["closings"] and "D" not in (
-                        "".join(symbols)):
-                    expiries += 1
-        self.assertGreater(expiries, 100)
+        for tag_start in (None, 2):
+            for length in range(7):
+                for symbols in product("HAD.R", repeat=length):
+                    match, features, priors = evidence_sequence(symbols, period_start=policy)
+                    if tag_start is not None:
+                        match.events = _start_tag(tag_start, tag_start + 1)
+                    result = decode(match, features, priors, config)
+                    expected = grouped_reference(
+                        symbols, [1] * length, 3, 2, latched_required=75, lookahead=50,
+                        period_start=policy, window=3,
+                        tag_start=tag_start if tag_start is not None and length > tag_start
+                        else None)
+                    self.assertEqual(result.labels.tolist(), expected,
+                                     ("".join(symbols), tag_start))
+                    if length and result.diagnostics["period_starts"][0]["closings"] and (
+                            "D" not in "".join(symbols)):
+                        expiries += 1
+        self.assertGreater(expiries, 200)
 
     def test_team_swap_symmetry_with_conflicting_geometry_and_tags(self):
         rng = np.random.default_rng(42)
@@ -700,27 +712,35 @@ def _await(symbols, **kwargs):
     return decode(*evidence_sequence(symbols, period_start=AWAIT, **kwargs))
 
 
-def _kickoff_match(fps, wait_s, missing_s=0., policy="await_start"):
+def _start_tag(start, end, kind="Kick Off (Start)"):
+    return [{"start_frame": start, "end_frame": end, "code": "SET PIECES",
+             "tags": {"Type": kind, "Team": "N/A"}}]
+
+
+def _kickoff_match(fps, wait_s, missing_s=0., policy="await_start", approach_s=0.):
     """Invented geometry: ball at rest on the centre spot with a home player beside it for
     `wait_s`, then dribbled away at 3 m/s with that player alongside; the first `missing_s` of
-    the dribble is unobserved. One away player and a second home player stand far off."""
+    the dribble is unobserved. One away player and a second home player stand far off. With
+    `approach_s`, that player first dribbles the ball to the spot (Almaz's pre-kickoff case)."""
     from possession.contracts import MatchData
-    wait, missing, play = round(wait_s * fps), round(missing_s * fps), round(3 * fps)
-    n = wait + missing + play
+    approach, wait, missing, play = (round(s * fps) for s in (approach_s, wait_s, missing_s, 3))
+    n = approach + wait + missing + play
     centre = np.array([52.5, 34.])
-    t = np.clip(np.arange(n) - wait, 0, None) / fps
+    i, kick = np.arange(n), approach + wait
+    t = np.where(i < approach, i - approach, np.clip(i - kick, 0, None)) / fps
     ball = centre + np.column_stack((3. * t, np.zeros(n)))
-    kicker = ball + np.where((np.arange(n) < wait)[:, None], [-.8, 0.], [0., .5])
+    waiting = (i >= approach) & (i < kick)
+    kicker = ball + np.where(waiting[:, None], [-.8, 0.], [0., .5])
     players = np.stack([kicker, np.tile(centre + [15., 10.], (n, 1)),
                         np.tile(centre + [-20., -10.], (n, 1))], axis=1)
-    speed = np.where(np.arange(n) < wait, 0., 3.)
-    ball[wait:wait + missing], speed[wait:wait + missing] = np.nan, np.nan
+    speed = np.where(waiting, 0., 3.)
+    ball[kick:kick + missing], speed[kick:kick + missing] = np.nan, np.nan
     return MatchData(
         frame=np.arange(n, dtype=np.int64), half=np.ones(n, dtype=np.int8), fps=fps,
         pitch_m=(105., 68.), ball_xy_m=ball, ball_observed=np.isfinite(ball).all(axis=1),
         players_xy_m=players, player_observed=np.ones((n, 3), dtype=bool),
         slot_team=np.array(["H", "A", "H"]), ball_speed_mps=speed,
-        metadata={"period_start": {"1": policy}}), wait + missing
+        metadata={"period_start": {"1": policy}}), kick + missing
 
 
 class HalfStartGateTests(unittest.TestCase):
@@ -740,8 +760,9 @@ class HalfStartGateTests(unittest.TestCase):
         result = _await("D" * 100 + "R" + "A" * 40)
         self.assertEqual(label_transitions(result.labels), [(100, "D", "A")])
         (log,) = result.diagnostics["period_starts"]
-        self.assertEqual(log, {"half": 1, "policy": "await_start", "gated": True, "openings": 1,
-                               "closings": 0, "first_possession": 100})
+        self.assertEqual(log, {"half": 1, "policy": "await_start", "gated": True,
+                               "start_tag": False, "openings": 1, "closings": 0,
+                               "first_possession": 100})
 
     def test_kickoff_with_missing_ball_waits_for_the_signal(self):
         result = _await("H" * 100 + "." * 40 + "R" + "." * 5 + "H" * 30)
@@ -819,8 +840,9 @@ class HalfStartGateTests(unittest.TestCase):
     def test_live_half_reports_its_first_possession(self):
         result = decode(*evidence_sequence("." * 10 + "H" * 30))
         self.assertEqual(result.diagnostics["period_starts"],
-                         [{"half": 1, "policy": "live_at_entry", "gated": False, "openings": 0,
-                           "closings": 0, "first_possession": 10}])
+                         [{"half": 1, "policy": "live_at_entry", "gated": False,
+                           "start_tag": False, "openings": 0, "closings": 0,
+                           "first_possession": 10}])
 
     def test_gate_is_skipped_when_e3_is_disabled(self):
         # Review: with E3 off nothing can confirm a kickoff, so gating would pin the half in D.
@@ -856,6 +878,88 @@ class HalfStartGateTests(unittest.TestCase):
         features = build_features(match)
         result = decode(match, features, build_priors(match, features))
         self.assertEqual(result.labels[0], "H")
+
+    # Decision 11: no opening before the period's first Kick Off (Start) tag frame.
+
+    def _tagged(self, symbols, start, end, kind="Kick Off (Start)", half=None):
+        match, features, priors = evidence_sequence(symbols, period_start=AWAIT, half=half)
+        match.events = _start_tag(start, end, kind)
+        return decode(match, features, priors)
+
+    def test_live_evidence_before_the_start_tag_cannot_open_the_half(self):
+        # Almaz: dribbling the ball to the spot gives generic live evidence before the kickoff.
+        # Without a tag it opens the half at frame 50; with one, only the R after its start does.
+        symbols = "H" * 50 + "R" + "H" * 100 + "R" + "H" * 30
+        self.assertEqual(label_transitions(_await(symbols).labels)[0][0], 50)
+        result = self._tagged(symbols, 140, 200)
+        self.assertEqual(label_transitions(result.labels), [(151, "D", "H")])
+        log = result.diagnostics["period_starts"][0]
+        self.assertEqual((log["start_tag"], log["openings"]), (True, 1))
+
+    def test_only_the_start_of_the_tag_matters(self):
+        # A tag that ended before the kickoff forbids openings before its start, not after.
+        result = self._tagged("H" * 50 + "R" + "H" * 149 + "R" + "H" * 30, 100, 110)
+        self.assertEqual(label_transitions(result.labels), [(200, "D", "H")])
+
+    def test_no_start_tag_in_the_period_means_no_restriction(self):
+        # Missing tag fails open (today's gate), never a half pinned in D. A tag before the
+        # period's graded frames, or of another kind, is not this period's start tag.
+        symbols, half = "." * 20 + "H" * 30 + "R" + "H" * 40, [0] * 20 + [1] * 71
+        expected = label_transitions(
+            decode(*evidence_sequence(symbols, half=half, period_start=AWAIT)).labels)
+        self.assertIn((50, "D", "H"), expected)
+        for start, end, kind in ((0, 20, "Kick Off (Start)"), (60, 80, "Kick Off (After Goal)"),
+                                 (60, 80, "Throw-in")):
+            with self.subTest(kind=kind, start=start):
+                result = self._tagged(symbols, start, end, kind, half=half)
+                self.assertEqual(label_transitions(result.labels), expected)
+                self.assertFalse(result.diagnostics["period_starts"][0]["start_tag"])
+        # The next period's start tag does not restrict this one.
+        result = self._tagged("R" + "H" * 40 + "." * 5 + "R" + "H" * 40, 70, 80,
+                              half=[1] * 41 + [0] * 5 + [2] * 41)
+        self.assertEqual(result.labels[40], "H")
+        self.assertEqual([log["start_tag"] for log in result.diagnostics["period_starts"]],
+                         [False, True])
+
+    def test_live_at_entry_periods_ignore_start_tags(self):
+        match, features, priors = evidence_sequence("H" * 40)
+        match.events = _start_tag(20, 30)
+        self.assertTrue(np.all(decode(match, features, priors).labels == "H"))
+
+    def test_end_to_end_start_tag_cases(self):
+        # Almaz's mechanism through real E4 features and E3 priors at 25 and 50 fps: a player
+        # dribbles the ball to the spot (5 s, controlled, so E3 reports live motion), it rests
+        # 20 s, then the kick. Tag start/end in seconds relative to the kick; None = no tag.
+        from possession.features import build_features
+        cases = {
+            "missing": None,             # fails open: today's early opening, reported
+            "starts_in_wait": (-10, None),  # the approach is stale evidence before eligibility
+            "ends_before_kick": (-10, -5),  # only the start matters
+            "starts_late": (1, None),       # delayed to the tag start, never before it
+            "starts_early": (-30, None),    # documented limit: the approach opens it again
+        }
+        for fps in (25., 50.):
+            for name, window in cases.items():
+                with self.subTest(fps=fps, case=name):
+                    match, kick = _kickoff_match(fps, 20., approach_s=5.)
+                    n = len(match.frame)
+                    if window is not None:
+                        start = max(0, kick + round(window[0] * fps))
+                        end = n if window[1] is None else kick + round(window[1] * fps)
+                        match.events = _start_tag(start, end)
+                    features = build_features(match)
+                    result = decode(match, features, build_priors(match, features))
+                    (log,) = result.diagnostics["period_starts"]
+                    first = log["first_possession"]
+                    self.assertEqual(log["start_tag"], window is not None)
+                    self.assertIsNotNone(first)
+                    if name in ("missing", "starts_early"):
+                        self.assertLess(first, kick - round(20 * fps))
+                        continue
+                    allowed = max(kick, start)
+                    self.assertTrue(np.all(result.labels[:allowed] == "D"), "no H before it")
+                    self.assertGreaterEqual(first, allowed, "boundary clamped at the opening")
+                    self.assertLessEqual(first - allowed, round(.5 * fps))
 
 
 if __name__ == "__main__":

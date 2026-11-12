@@ -1,12 +1,12 @@
 # Belek and Isken — Possession state machine
 
 - Owner: Belek and Isken
-- Status: Decisions 7-9 on `main` (PR #13); Decision 10 (half-start gate) in review
+- Status: Decisions 7-9 on `main` (PR #13); Decisions 10-11 (half-start gate) in review
 - Branch: Belek on `e2/half-start-gate`
 - Reviewer: E4
 - Owned files: possession/state_machine.py; state-machine configuration and tests
 - Current milestone: synthetic decoder validation and E3/export integration
-- Last update: 2026-11-12 (Belek's track, Decision 10)
+- Last update: 2026-11-12 (Belek's track, Decision 11)
 
 ## Pair coordination
 
@@ -111,9 +111,16 @@ has its own tests (Decision 10 lists them) and the reference model mirrors it.
   which now reaches gate expiry). Mutation check: removing each of the seven gate rules makes at
   least one test fail. Pre-commit review found that E3 disabled by config pinned await halves in
   D; the gate is now skipped and reported in that case.
-- Unmeasured: real-match effect. Next: a local smoke run (per half: where the gate opened and why,
-  first possession, no H/A in the published pre-kickoff wait; counts kept local); then review by
-  Almaz (E3 interaction) and Azamat (the E1 field), and send the E3 proposals to Almaz.
+- Smoke run (local, counts kept local): the gate works, but E3's generic live signal opened half 2
+  long before the published kickoff. Almaz's investigation (PR #19) found no usable dedicated
+  kickoff signal yet, so Decision 11 was added on the same branch.
+- Decision 11: no opening before the period's first `Kick Off (Start)` tag frame; no tag means no
+  restriction. Reuses E3's `_kickoff_context` (copied unchanged from PR #19; whichever merges
+  second keeps one copy). Almaz confirmed locally (yes/no) that the half-2 tag does not cover the
+  early opening. Tests: 236 pass on Python 3.12.16 (5 new, incl. 5 tag cases end to end at 25/50 fps, plus the exhaustive comparison rerun
+  with a tag); four mutations of the rule each fail a test.
+- Next: Belek's local smoke run of the final branch (half 1 unchanged; half 2 first possession no
+  earlier than before; counts kept local); then review by Almaz, Beks and Azamat (INTERFACES).
 
 ## Belek's last task: tracking-first fusion (PR #13, squash-merged)
 

@@ -11,6 +11,23 @@
 
 ### Local diagnostic follow-up
 
+- Added a settlement-detail breakdown after Almaz's qualitative local result
+  indicated the settlement prerequisite was unmet. Diagnostic-only counts now
+  separate observed/usable centre positions from stillness, and look for slow
+  centre observations just before the tag using the existing restart-context
+  duration, within the same half. That lookback never changes detector evidence.
+  The CLI also writes a readable `runs/kickoff-summary.txt` with categories only.
+  No private counts, positions or match frames are recorded in this handoff.
+- Current verification: **27 kickoff tests and 242 full-suite tests pass** on
+  Python 3.15.0. Two added tests cover all settlement-detail categories and
+  ensure diagnostic lookback cannot open the detector or cross halves.
+  The CLI test checks the readable summary. `git diff --check` passes.
+  Equivalent pre-commit review found no blocking issue; this remains diagnostics
+  only, with all behavioral settings unchanged.
+- Next human step: rerun `scripts/diagnose_kickoff.py` locally, open
+  `runs/kickoff-summary.txt`, and share only half 2's settlement-detail category.
+  Diagnose the assumption before designing a general synthetic behavioral fix.
+
 - Almaz reports the human-run exactly-one check returned **NO**. The hosted
   assistant has not inspected restricted inputs or reports. The signal is not
   ready for E2 activation based on the current evidence. No thresholds changed.

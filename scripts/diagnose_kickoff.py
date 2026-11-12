@@ -32,7 +32,14 @@ def main(argv=None):
     destination = ROOT / "runs" / "kickoff-gates.json"
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n", encoding="utf-8")
-    print("Saved runs/kickoff-gates.json. Inspect locally; do not share the report.")
+    lines = [] if report["enabled"] else ["E3_DISABLED"]
+    for half, period in report["periods"].items():
+        lines.append("Half {}: {}".format(half, period["stage"]))
+        if "settlement_detail" in period:
+            lines.append("Settlement detail: " + period["settlement_detail"])
+    (destination.parent / "kickoff-summary.txt").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8")
+    print("Saved runs/kickoff-summary.txt and kickoff-gates.json. Inspect locally.")
     return 0
 
 

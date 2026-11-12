@@ -193,6 +193,7 @@ def _kickoff_flags(match, control, settings, usable, still, moving, totals=None)
         if totals is not None and half:
             counters = totals.setdefault(str(half), dict.fromkeys((
                 "context_frames", "observed_context_frames", "usable_context_frames",
+                "centre_observed_context_frames", "centre_usable_context_frames",
                 "centre_slow_frames", "settlement_confirmations",
                 "moving_after_settlement_frames", "motion_dwell_frames",
                 "departure_frames", "control_corroborated_departure_frames",
@@ -220,6 +221,8 @@ def _kickoff_flags(match, control, settings, usable, still, moving, totals=None)
 
         if counters is not None:
             counters["observed_context_frames"] += 1
+            counters["centre_observed_context_frames"] += bool(
+                radius[i] <= settings.kickoff_centre_radius_m)
 
         in_pitch = np.all(match.ball_xy_m[i] >= 0) and np.all(
             match.ball_xy_m[i] <= np.asarray(match.pitch_m))
@@ -244,6 +247,8 @@ def _kickoff_flags(match, control, settings, usable, still, moving, totals=None)
             continue
         if counters is not None:
             counters["usable_context_frames"] += 1
+            counters["centre_usable_context_frames"] += bool(
+                radius[i] <= settings.kickoff_centre_radius_m)
         last_observed = i
         if control[i]:
             last_control = i
@@ -483,7 +488,22 @@ def summarize_kickoff_diagnostics(match, features=None, config=None):
     _build_priors(match, features, config, kickoff_totals=periods)
     settings = _section({} if config is None else config, "dead_ball", DeadBallConfig)
     enabled = settings.enabled and settings.evidence_weight > 0
-    for counters in periods.values():
+    # Diagnostic-only lookback: did existing still-centre evidence occur just
+    # before a tag window? It never arms or alters the actual detector.
+    context = _kickoff_context(match.events, len(match.frame))
+    starts = np.flatnonzero(context & ~np.r_[False, context[:-1]]) if len(context) else []
+    changes = np.zeros(len(match.frame) + 1, dtype=np.int64)
+    lookback = math.ceil(settings.restart_context_s * match.fps)
+    for start in starts:
+        changes[max(0, start-lookback)] += 1
+        changes[start] -= 1
+    before_tag = (np.cumsum(changes[:-1]) > 0) & ~context
+    _, slow, _, _ = _motion(match, settings)
+    offset = match.ball_xy_m - np.asarray(match.pitch_m)/2
+    near_centre = np.hypot(offset[:, 0], offset[:, 1]) <= settings.kickoff_centre_radius_m
+    for half, counters in periods.items():
+        counters["slow_centre_before_tag_frames"] = int(np.count_nonzero(
+            before_tag & slow & near_centre & (match.half == int(half))))
         stages = (
             ("context_frames", "NO_START_TAG_CONTEXT"),
             ("usable_context_frames", "NO_USABLE_BALL_IN_CONTEXT"),
@@ -496,6 +516,18 @@ def summarize_kickoff_diagnostics(match, features=None, config=None):
         counters["stage"] = next((reason for field, reason in stages if not counters[field]),
                                  "ONE_CONFIRMATION" if counters["confirmed_kickoffs"] == 1
                                  else "MULTIPLE_CONFIRMATIONS")
+        if counters["stage"] == "NO_CONFIRMED_CENTRE_SETTLEMENT":
+            if not counters["centre_slow_frames"] and counters["slow_centre_before_tag_frames"]:
+                detail = "SLOW_CENTRE_SEEN_BEFORE_TAG"
+            elif not counters["centre_observed_context_frames"]:
+                detail = "NO_CENTRE_OBSERVATION_IN_TAG"
+            elif not counters["centre_usable_context_frames"]:
+                detail = "NO_USABLE_CENTRE_OBSERVATION"
+            elif not counters["centre_slow_frames"]:
+                detail = "CENTRE_OBSERVATIONS_FAIL_STILLNESS"
+            else:
+                detail = "FRAGMENTED_SETTLEMENT_SUPPORT"
+            counters["settlement_detail"] = detail
     return {"enabled": enabled, "periods": periods}
 
 

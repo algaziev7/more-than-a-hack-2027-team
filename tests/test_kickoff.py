@@ -305,6 +305,52 @@ class KickoffTests(unittest.TestCase):
         json.dumps(report, allow_nan=False)
         self.assertEqual(report["periods"]["1"]["confirmed_kickoffs"], 1)
 
+    def test_diagnostic_settlement_details_distinguish_missing_evidence(self):
+        details = (
+            "SLOW_CENTRE_SEEN_BEFORE_TAG", "NO_CENTRE_OBSERVATION_IN_TAG",
+            "NO_USABLE_CENTRE_OBSERVATION", "CENTRE_OBSERVATIONS_FAIL_STILLNESS",
+            "FRAGMENTED_SETTLEMENT_SUPPORT",
+        )
+        for detail in details:
+            match = kickoff_match()
+            centre = np.asarray(match.pitch_m)/2
+            if detail == "SLOW_CENTRE_SEEN_BEFORE_TAG":
+                match.events[0]["start_frame"] = int(match.fps)
+            elif detail == "NO_CENTRE_OBSERVATION_IN_TAG":
+                match.ball_xy_m[:, 0] += 5
+            elif detail == "NO_USABLE_CENTRE_OBSERVATION":
+                match.ball_xy_m[:] = centre
+                match.ball_speed_mps[:] = 100
+                match.ball_xy_m[-20:, 0] += 5
+                match.ball_speed_mps[-20:] = 0
+            elif detail == "CENTRE_OBSERVATIONS_FAIL_STILLNESS":
+                match.ball_xy_m[:, 0] = centre[0] + np.where(
+                    np.arange(len(match.frame)) % 2, .2, -.2)
+                match.ball_speed_mps[:] = 3
+            else:
+                match.ball_xy_m[:] = centre
+                moving = np.arange(len(match.frame)) % 7 >= 5
+                match.ball_xy_m[moving, 0] += .3
+                match.ball_speed_mps[:] = 0
+                match.ball_speed_mps[moving] = 3
+            features = control_features(match)
+            with self.subTest(detail=detail):
+                report = summarize_kickoff_diagnostics(match, features)
+                self.assertEqual(report["periods"]["1"]["settlement_detail"], detail)
+
+    def test_diagnostic_lookback_never_supplies_detector_evidence_or_crosses_halves(self):
+        match = kickoff_match()
+        start = int(match.fps)
+        match.events[0]["start_frame"] = start
+        features = control_features(match)
+        report = summarize_kickoff_diagnostics(match, features)
+        self.assertEqual(report["periods"]["1"]["confirmed_kickoffs"], 0)
+        self.assertGreater(report["periods"]["1"]["slow_centre_before_tag_frames"], 0)
+        self.assertEqual(len(pulses(match, features)), 0)
+        match.half[start:] = 2
+        report = summarize_kickoff_diagnostics(match, features)
+        self.assertEqual(report["periods"]["2"]["slow_centre_before_tag_frames"], 0)
+
     def test_diagnostics_report_blocked_stop_and_disabled_inference(self):
         match = kickoff_match()
         reception = int(2*match.fps)
@@ -338,6 +384,8 @@ class KickoffTests(unittest.TestCase):
                 self.assertEqual(cli.main([]), 0)
             report = json.loads((Path(directory)/"runs"/"kickoff-gates.json").read_text())
             self.assertEqual(report["periods"]["1"]["stage"], "ONE_CONFIRMATION")
+            summary = (Path(directory)/"runs"/"kickoff-summary.txt").read_text()
+            self.assertEqual(summary.strip(), "Half 1: ONE_CONFIRMATION")
         self.assertNotIn("ONE_CONFIRMATION", console.getvalue())
         self.assertNotIn("confirmed_kickoffs", console.getvalue())
 

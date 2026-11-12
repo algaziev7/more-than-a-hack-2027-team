@@ -88,15 +88,27 @@ python scripts/diagnose_kickoff.py --config configs/input-v1.json
 ```
 
 The command uses the detector's actual gates with optional counters, writes
-`runs/kickoff-gates.json`, and prints no match diagnostics. Open that file locally
-and inspect `periods["2"]["stage"]`. Share only that qualitative stage, never
-the report or counts. Stages distinguish absent start-tag context, no usable
+`runs/kickoff-gates.json` plus a readable `runs/kickoff-summary.txt`, and prints
+no match diagnostics. Open the summary locally and share only half 2's stage
+and optional settlement-detail category, never the report or counts.
+Stages distinguish absent start-tag context, no usable
 ball, no confirmed centre settlement, no sustained subsequent motion, no clear
 departure, no endpoint control, and a contradictory confirmed stop. The counts
 include reset causes (missing budget, rejected observation, context loss,
 episode expiry and motion pause) to inspect privately. An earliest unmet stage
 is a diagnostic lead, not proof of the real-match cause. Thresholds and labels
 are unchanged. `enabled: false` means the config disabled motion inference.
+
+When settlement is missing, the report distinguishes no observed ball near the
+centre, observed but unusable centre positions/speeds, centre observations that
+fail stillness, and fragmented slow support. A diagnostic-only lookback using
+the existing `restart_context_s` also checks for slow centre observations just
+before the start-tag window, within the same half. `SLOW_CENTRE_SEEN_BEFORE_TAG`
+is evidence outside the required context, not proof it belongs to this kickoff.
+It never supplies settlement evidence or changes detections. This helps test
+whether requiring the full settlement inside a tag window is an unsuitable
+assumption, without expanding a radius, speed threshold or tag window to fit
+this match.
 
 Run the following on the E3 branch with the same config as the reported PR #18
 run. It writes the opening flags, nearby centre distances, and start-tag

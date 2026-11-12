@@ -137,6 +137,24 @@ def build_priors(match, features=None, config=None) -> PriorData:
     return _build_priors(match, features, config)
 
 
+def _kickoff_context(events, n):
+    """Only start-kickoff tags provide context; duplicates never add strength."""
+    changes = np.zeros(n + 1, dtype=np.int64)
+    normalise = lambda value: " ".join(str(value).casefold().split())
+    for event in events:
+        if normalise(event.get("code", "")) != "set pieces":
+            continue
+        kinds = {normalise(value) for key, value in (event.get("tags") or {}).items()
+                 if normalise(key) == "type"}
+        if kinds == {"kick off (start)"}:
+            start, end = max(0, event["start_frame"]), min(n, event["end_frame"])
+            if start >= end:
+                continue
+            changes[start] += 1
+            changes[end] -= 1
+    return np.cumsum(changes[:-1]) > 0
+
+
 def _build_priors(match, features, config, totals=None):
     _validate_inputs(match, features)
     config = {} if config is None else config

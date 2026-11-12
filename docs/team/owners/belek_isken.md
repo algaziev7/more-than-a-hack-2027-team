@@ -1,12 +1,12 @@
 # Belek and Isken — Possession state machine
 
 - Owner: Belek and Isken
-- Status: decoder with Decisions 7-9 merged to `main` (PR #13, squash-merged); no E2 task active
-- Branch: none active; `e2/tracking-first-fusion` deleted after the squash-merge
+- Status: Decisions 7-9 on `main` (PR #13); Decisions 10-11 (half-start gate) in review
+- Branch: Belek on `e2/half-start-gate`
 - Reviewer: E4
 - Owned files: possession/state_machine.py; state-machine configuration and tests
 - Current milestone: synthetic decoder validation and E3/export integration
-- Last update: 2026-11-11 (Belek's track, PR #13 merged)
+- Last update: 2026-11-12 (Belek's track, Decision 11)
 
 ## Pair coordination
 
@@ -97,6 +97,33 @@ When E4 features exist, connect them to the synthetic integration slice.
 - Help needed: Belek/E4 behavior review, E3 unknown-team restart discussion,
   E4 feature builder, and E5 pipeline integration. Hidden-match improvement is
   not measured; the public answer window was not used.
+
+## Belek's current task: half-start gate (`e2/half-start-gate`)
+
+Decision 10 in the decision doc. An `await_start` period stays D until E3 confirms play started;
+proximity and tags alone never open it, and the stop safety valve cannot act before the period's
+first possession. E1's `PERIOD_START` in `possession/data.py` declares half 1 `live_at_entry`
+and half 2 `await_start` from FAQ.md (Azamat agreed to the field; documented in INTERFACES.md).
+Test fixtures declare `live_at_entry` centrally, so existing tests keep their meaning; the gate
+has its own tests (Decision 10 lists them) and the reference model mirrors it.
+
+- Tests: 231 pass on Python 3.12.16 (16 new, incl. the await-start exhaustive comparison,
+  which now reaches gate expiry). Mutation check: removing each of the seven gate rules makes at
+  least one test fail. Pre-commit review found that E3 disabled by config pinned await halves in
+  D; the gate is now skipped and reported in that case.
+- Smoke run (local, counts kept local): the gate works, but E3's generic live signal opened half 2
+  long before the published kickoff. Almaz's investigation (PR #19) found no usable dedicated
+  kickoff signal yet, so Decision 11 was added on the same branch.
+- Decision 11: no opening before the period's first `Kick Off (Start)` tag frame; no tag means no
+  restriction. Reuses E3's `_kickoff_context` (copied unchanged from PR #19; whichever merges
+  second keeps one copy). Almaz confirmed locally (yes/no) that the half-2 tag does not cover the
+  early opening. Tests: 236 pass on Python 3.12.16 (5 new, incl. 5 tag cases end to end at 25/50 fps, plus the exhaustive comparison rerun
+  with a tag); four mutations of the rule each fail a test.
+- Almaz's review (E3, approves the policy): the tag search now stays inside the current
+  contiguous block of the period, with a regression test. Smoke result unaffected (two
+  contiguous halves).
+- Next: Belek's local smoke run of the final branch (half 1 unchanged; half 2 first possession no
+  earlier than before; counts kept local); then review by Almaz, Beks and Azamat (INTERFACES).
 
 ## Belek's last task: tracking-first fusion (PR #13, squash-merged)
 

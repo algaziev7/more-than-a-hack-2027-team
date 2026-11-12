@@ -27,8 +27,13 @@ LEAD = W + 5  # home evidence long enough to establish H before the event under 
 # it's kept here purely to compute expected frame offsets (e.g. CONFIG.team_dwell_frames) below.
 
 
+# These scenarios assume play is live from the half's first frame (Decision 10, live_at_entry).
+LIVE_PERIODS = {"period_start": {"1": "live_at_entry", "2": "live_at_entry"}}
+
+
 def _match(n, half=1):
-    return SimpleNamespace(frame=np.arange(n), half=np.full(n, half, dtype=int))
+    return SimpleNamespace(frame=np.arange(n), half=np.full(n, half, dtype=int),
+                           metadata=LIVE_PERIODS)
 
 
 def _features(n, team_h=0.5, team_rel=0.0):
@@ -378,7 +383,7 @@ class StateMachineTests(unittest.TestCase):
                 n1, gap = 30, 5
                 half = np.concatenate([np.full(n1, 1), np.full(gap, 0), np.full(n2, 2)])
                 n = len(half)
-                match = SimpleNamespace(frame=np.arange(n), half=half)
+                match = SimpleNamespace(frame=np.arange(n), half=half, metadata=LIVE_PERIODS)
                 features = _features(n, team_h=0.95, team_rel=0.9)  # strong home evidence throughout
                 labels = decode(match, features, _priors(n)).labels
                 self.assertTrue(np.all(labels[:n1] == H), "first half earns H (backdated)")

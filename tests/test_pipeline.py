@@ -164,9 +164,10 @@ class DecoderIntegrationTests(unittest.TestCase):
         half[n // 2:] = 2
         half[[0, -1]] = 0
         # Geometry and half locations are invented, not match observations.
+        # Both invented halves start live (E2 Decision 10); the half-start gate has its own tests.
         match = MatchData(np.arange(n, dtype=np.int64), half, 25., (105.3, 68.),
                           ball, np.ones(n, bool), players, np.ones((n, 2), bool),
-                          np.array(["H", "A"]))
+                          np.array(["H", "A"]), metadata={"period_start": {"1": "live_at_entry", "2": "live_at_entry"}})
         with patch("possession.pipeline.load_match", return_value=match):
             prediction = predict_match()
         self.assertEqual(prediction.labels[n // 2 - 1], "H")
@@ -188,7 +189,7 @@ class DecoderIntegrationTests(unittest.TestCase):
         half = np.r_[np.ones(60), np.zeros(5), np.full(45, 2)].astype(np.int8)
         match = MatchData(np.arange(n, dtype=np.int64), half, 25., (105.3, 68.),
                           ball, np.ones(n, bool), players, np.ones((n, 2), bool),
-                          np.array(["H", "A"]))
+                          np.array(["H", "A"]), metadata={"period_start": {"1": "live_at_entry", "2": "live_at_entry"}})
         with patch("possession.pipeline.load_match", return_value=match):
             first, second = predict_match(), predict_match()
         self.assertEqual(first.labels[30], "H")

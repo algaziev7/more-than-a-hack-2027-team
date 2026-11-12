@@ -9,6 +9,34 @@
 
 ## Dedicated kickoff confirmation for PR #18 (2026-11-12)
 
+### Belek's review corrections
+
+- Addressed the two requested pre-merge changes from
+  [Belek's review](https://github.com/algaziev7/more-than-a-hack-2027-team/pull/19#issuecomment-6820670319).
+  `_kickoff_context` now clips start/end to `[0, n)` and skips empty overlap.
+  Added a regression reproduced failing before the fix for negative start,
+  oversized end, fully excluded windows, empty windows and an empty timeline.
+  A separate test preserves MatchData's existing rejection of unclipped events:
+  this is helper hardening, not a relaxation of the public input contract.
+- Documented bit 256's role as label-affecting E2 confirmation evidence and
+  `None` flags as no confirmation in `docs/team/INTERFACES.md`, as requested by
+  E2. E1/Azamat sign-off remains required; no consumer implementation changed.
+- Verification: **21 kickoff tests pass; 236 full-suite tests pass**, no skips,
+  on this session's Python 3.15.0 environment. `git diff --check` passes.
+  Belek separately reports that the previous 234-test revision passed on
+  Python 3.12 and merged with #18 without conflicts; that is reviewer-provided
+  evidence, not a Python 3.12 run performed in this session.
+- Repeated the equivalent pre-commit correctness/contract review on the full
+  follow-up diff and its callers. No additional blocking finding identified.
+- Review items 3/4 concern E2 policy and human-only local verification. No
+  restricted-data check was run or claimed here. A generic fallback after a
+  missing/expired tag can still accept pre-kickoff repositioning, so it would
+  need an explicit change to the agreed half-start policy. Disabled E3 likewise
+  remains an explicit E2 policy decision; no silent bypass was added to E3.
+- Next: Belek re-reviews fixes 1/2, Azamat signs off on the interface note, and
+  a human teammate checks locally whether half 2 emits exactly one kickoff
+  confirmation, reporting only yes/no before E2 switches to the dedicated bit.
+
 - Published implementation: `0a20640`; draft review PR:
   [#19](https://github.com/algaziev7/more-than-a-hack-2027-team/pull/19).
 - Implemented E3 option A on an isolated task worktree; shared main and other

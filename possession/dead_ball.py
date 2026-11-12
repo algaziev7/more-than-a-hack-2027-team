@@ -158,8 +158,11 @@ def _kickoff_context(events, n):
         kinds = {normalise(value) for key, value in (event.get("tags") or {}).items()
                  if normalise(key) == "type"}
         if kinds == {"kick off (start)"}:
-            changes[event["start_frame"]] += 1
-            changes[event["end_frame"]] -= 1
+            start, end = max(0, event["start_frame"]), min(n, event["end_frame"])
+            if start >= end:
+                continue
+            changes[start] += 1
+            changes[end] -= 1
     return np.cumsum(changes[:-1]) > 0
 
 

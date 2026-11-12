@@ -7,7 +7,9 @@ from dataclasses import fields
 import numpy as np
 
 from possession.contracts import PriorData
-from possession.dead_ball import CONFIRMED_KICKOFF, build_priors, summarize_prior_diagnostics
+from possession.dead_ball import (
+    CONFIRMED_KICKOFF, _kickoff_context, build_priors, summarize_prior_diagnostics,
+)
 from possession.features import build_features
 from tests.test_dead_ball import match_input, control_features
 
@@ -134,6 +136,28 @@ class KickoffTests(unittest.TestCase):
         match = kickoff_match()
         match.events[0]["start_frame"] = int(match.fps)
         self.assertEqual(len(pulses(match, control_features(match))), 0)
+
+    def test_context_clips_windows_to_timeline_without_negative_index_wrap(self):
+        cases = (
+            (-3, 3, [True, True, True, False, False]),
+            (2, 8, [False, False, True, True, True]),
+            (-3, 8, [True, True, True, True, True]),
+            (-9, -1, [False]*5),
+            (5, 9, [False]*5),
+            (2, 2, [False]*5),
+        )
+        for start, end, expected in cases:
+            event = {"start_frame": start, "end_frame": end, "code": "SET PIECES",
+                     "tags": {"Type": "Kick Off (Start)"}}
+            with self.subTest(start=start, end=end):
+                np.testing.assert_array_equal(_kickoff_context([event], 5), expected)
+                np.testing.assert_array_equal(_kickoff_context([event], 0), [])
+
+    def test_public_match_contract_still_requires_clipped_events(self):
+        match = kickoff_match()
+        match.events[0]["start_frame"] = -1
+        with self.assertRaisesRegex(ValueError, "clipped"):
+            build_priors(match)
 
     def test_short_motion_and_stale_control_do_not_confirm(self):
         match = kickoff_match()

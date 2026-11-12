@@ -120,6 +120,10 @@ feature-dictionary keys are required. The shared types are unchanged.
 passes all diagnostic flags as an integer array; the shared constructor also
 allows None for other modules that do not provide flags.
 
+`CONFIRMED_KICKOFF = 256` is E3 confirmation evidence for E2's `await_start`
+gate, not merely a diagnostic; missing flags (`None`) mean no kickoff
+confirmation. E2 consumer integration (PR #18) and E1 sign-off remain pending.
+
 In the combined function, `dead_evidence=0.9` supports stopped play and 0.1
 supports live play, with default weight 0.5. No opinion remains 0.5 with weight
 0. These are untuned strengths, not measured probabilities. Tagging-only helpers

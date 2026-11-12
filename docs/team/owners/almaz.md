@@ -9,6 +9,30 @@
 
 ## Dedicated kickoff confirmation for PR #18 (2026-11-12)
 
+### Local video geometry review
+
+- Added `scripts/review_kickoff_geometry.py` to project tracking and the detector
+  centre region onto a local tactical video using the supplied homography.
+  It reuses starter projection functions unchanged, verifies homography frame
+  IDs/validity/lengths, and refuses to draw invalid/singular transforms.
+- Output is ignored `runs/kickoff-geometry/private-overlay.html`. A browser file
+  picker opens the MP4 locally; Python never reads/copies/uploads the video.
+  Network connections are blocked by CSP. Missing observations remain missing.
+  There are no annotation/correction tools, labels or threshold changes.
+- Explicit timing assumptions and duration warnings distinguish possible video
+  alignment problems from spatial calibration errors. Browser playback and
+  real-video physical alignment remain unverified in this hosted session.
+- Verification: **265 full-suite tests pass** on Python 3.15.0, including four
+  synthetic tests for metre/normalized/pixel conversion, missing/invalid/singular
+  cases, the local CLI and rejection of reordered homography frames. Viewer JS
+  passes Node syntax checking; `git diff --check` passes. Equivalent pre-commit
+  review checked projection units, invalid observations, local-only media and
+  timing limitations. No restricted input/output was opened by the assistant.
+- Next: Almaz downloads the homography/MP4 locally, runs the viewer, checks
+  timing first and then field/player/ball alignment, and shares only an overall
+  quality impression. Do not send HTML, video, coordinates or screenshots to
+  hosted tools or turn observations into match-specific labels/constants.
+
 ### Controlled-pass experiment
 
 - Tested the proposed relative-motion alternative in standalone

@@ -83,6 +83,27 @@ that the existing PR #18 consumes the new bit: it currently does not.
 
 ### Local diagnostic recipe (human terminal only)
 
+For local visual source-quality review, `scripts/review_kickoff_geometry.py`
+requires the tactical homography CSV alongside the tracking files. Supply
+`--check-frame` for inspection only. It writes
+`runs/kickoff-geometry/private-overlay.html`; open locally and select the
+tactical MP4 in the browser's file picker. The page makes no network calls;
+its CSP blocks connections, and the selected video uses a local object URL.
+No MP4 is read by Python, copied or uploaded. Keep the page and screenshots
+local. Compare pitch lines/centre, then player feet, then ball observations.
+Toggle the overlay to inspect the original image. Give only an overall quality
+impression, never frame-indexed annotations, corrections or possession labels.
+
+Projection uses the supplied starter homography reader/projector unchanged:
+canonical metres are divided by pitch dimensions before projection. Frame IDs,
+validity and lengths are checked; invalid/singular transforms and missing balls
+are not drawn. Browser decoding uses media timestamps when available, with
+explicit constant-frame-rate/zero-origin assumptions and duration warnings.
+Timing and actual physical alignment still require local review; a compatible
+duration is not proof of alignment. The browser API is documented in the
+[video-frame callback specification](https://wicg.github.io/video-rvfc/).
+This is a diagnostic viewer, not a calibration estimator or a kickoff fix.
+
 For a single consolidated investigation, use `scripts/debug_kickoff.py` with
 the actual run config and a published `--check-frame` used only for inspection.
 It loads once and connects source metadata audit, actual E4 -> E3 -> current

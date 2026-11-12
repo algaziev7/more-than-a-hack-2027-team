@@ -82,6 +82,33 @@ class KickoffTests(unittest.TestCase):
             features.team_reliability[start] = .8
             self.assertEqual(len(pulses(match, features)), 1)
 
+    def test_kick_control_remains_valid_during_a_bounded_longer_motion_dwell(self):
+        for fps in (25., 50.):
+            match = kickoff_match(fps)
+            features = control_features(match, supported=False)
+            start = int(fps)
+            features.team_evidence[start] = [.9, .1]
+            features.team_reliability[start] = .8
+            found = pulses(match, features, {"dead_ball": {"motion_duration_s": 1.2}})
+            np.testing.assert_array_equal(found, [start + int(1.2*fps) - 1])
+
+    def test_remembered_kick_control_expires_and_does_not_leak_to_a_new_episode(self):
+        match = kickoff_match()
+        features = control_features(match, supported=False)
+        features.team_evidence[25] = [.9, .1]
+        features.team_reliability[25] = .8
+        self.assertEqual(len(pulses(match, features,
+                                    {"dead_ball": {"motion_duration_s": 3.2}})), 0)
+        # An invented return to the centre, a fresh settlement, then a second
+        # departure without fresh control. Rejected return motion cannot carry
+        # the first kick's corroboration into the new episode.
+        centre = np.asarray(match.pitch_m)/2
+        match.ball_xy_m[45:] = centre
+        match.ball_speed_mps[45:] = 0
+        match.ball_xy_m[75:, 0] += np.arange(1, len(match.frame)-74)*.12
+        match.ball_speed_mps[75:] = 3
+        self.assertEqual(len(pulses(match, features)), 1)
+
     def test_control_at_stationary_reception_can_confirm(self):
         for fps in (25., 50.):
             match = kickoff_match(fps)

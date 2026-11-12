@@ -32,8 +32,11 @@ The candidate requires:
   beyond that centre region, and displacement of `kickoff_departure_m` from
   the last settled position (default 1.5 m).
 - E4 control using the existing reliability >= 0.5 and team support >= 0.75
-  cutoffs, within `kickoff_control_window_s` (default 1 s) of the motion onset
-  and confirmation, or at reception. Control need not persist throughout a pass.
+  cutoffs, within `kickoff_control_window_s` (default 1 s) before/at motion onset,
+  or fresh control at reception. Control near the kick corroborates the bounded
+  motion episode even when confirmation takes longer than the control window.
+  It cannot survive episode expiry or carry into a new episode. Control need
+  not persist throughout a pass.
 - Confirmation within `restart_context_s` of the last observed settlement.
   Sustained stillness at the centre refreshes settlement. A new confirmed stop
   at reception prevents a late kickoff pulse.
@@ -79,6 +82,29 @@ unknown team, and mixed period policies. E3's standalone tests cannot establish
 that the existing PR #18 consumes the new bit: it currently does not.
 
 ### Local diagnostic recipe (human terminal only)
+
+Before changing geometric tolerances, verify the raw input declarations locally:
+
+```bash
+python scripts/audit_kickoff_source.py
+```
+
+This reads only the ATD metadata, never tracking rows or videos, and saves
+`runs/kickoff-source-audit.txt`. It checks explicit normalized x/y position units,
+the ball's x/y/s record order and separators, and frame rate against the configured
+game schema. Missing declarations are reported as unverified, never guessed.
+Share only these categories. A mismatch requires E1 source-contract review,
+not a larger centre radius. Agreement verifies declarations, not actual tracking
+accuracy or the physical placement of the ball.
+
+The schema check follows the pinned public reference implementation:
+[Kloppy v3.18.0 EPTS metadata/models](https://github.com/PySport/kloppy/tree/v3.18.0/kloppy/infra/serializers/tracking/metrica_epts).
+Its [MetricaCoordinateSystem](https://github.com/PySport/kloppy/blob/v3.18.0/kloppy/domain/models/common.py)
+uses normalized 0–1 coordinates with centre `(0.5, 0.5)`. A synthetic integration
+test now serializes that centre to raw tracking, loads the complete synthetic
+bundle through the actual E1 loader, then runs E4 -> E3 at 25/50 fps. It preserves
+the expected metre centre and confirms the synthetic kickoff. That establishes
+conversion consistency for declared normalized inputs, not the restricted export.
 
 If the yes/no check returns no confirmations, run this in a separate local
 terminal with the actual prediction config:

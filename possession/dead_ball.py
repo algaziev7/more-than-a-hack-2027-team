@@ -187,6 +187,7 @@ def _kickoff_flags(match, control, settings, usable, still, moving, totals=None)
     previous_half = 0
     settled = count = missing = 0
     origin = armed_at = onset = last_control = last_observed = last_motion = None
+    kick_control = False
     for i in range(n):
         half = int(match.half[i])
         counters = None
@@ -279,6 +280,7 @@ def _kickoff_flags(match, control, settings, usable, still, moving, totals=None)
                 counters["moving_after_settlement_frames"] += 1
             if onset is None:
                 onset = i
+                kick_control = (last_control is not None and i-last_control <= control_frames)
             count += 1
             last_motion = i
         elif count < motion_frames:
@@ -287,9 +289,12 @@ def _kickoff_flags(match, control, settings, usable, still, moving, totals=None)
             count = 0
             onset = last_motion = None
         # A settled ball moved to another spot must not bank motion indefinitely.
-        corroborated = (onset is not None and last_control is not None
-                        and last_control >= onset - control_frames
-                        and i - last_control <= control_frames)
+        # Control near the kick corroborates this bounded motion episode even
+        # after the endpoint-control window passes. Fresh reception control is
+        # the alternative; control from before an unrelated episode cannot count.
+        corroborated = (onset is not None and (kick_control or (
+            last_control is not None and last_control >= onset
+            and i-last_control <= control_frames)))
         sustained = (count >= motion_frames and last_motion is not None
                      and i - last_motion <= control_frames)
         departed = (sustained and radius[i] > settings.kickoff_centre_radius_m

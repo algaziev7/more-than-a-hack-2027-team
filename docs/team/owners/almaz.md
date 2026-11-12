@@ -11,6 +11,29 @@
 
 ### Local diagnostic follow-up
 
+- Added a synthetic full loader -> E4 -> E3 coordinate regression at 25/50 fps:
+  normalized `(0.5, 0.5)` survives actual parsing as the metre pitch centre and
+  produces a kickoff pulse. No conversion error was found for this declared
+  normalized schema. Inspected public Kloppy v3.18.0 source, not match inputs.
+- Added `scripts/audit_kickoff_source.py` for a separate human terminal. It reads
+  only source metadata declarations (units, ball record layout, frame rate),
+  writes local categories to `runs/kickoff-source-audit.txt`, and flags missing
+  declarations as unverified. It does not infer a coordinate correction from
+  the published kickoff, alter E1's loader or relax the centre requirement.
+- Fixed a separate reproduced E3 bug: control at the kick expired during a
+  longer motion-confirmation dwell. Kick control is now remembered for that
+  bounded episode, with existing expiry and fresh reception as an alternative.
+  Regression failed before the fix; expiry and cross-episode leakage tests pass.
+  This fixes the endpoint-control contract, not the reported centre failure.
+- Current verification: **251 full-suite tests pass**, including 33 kickoff
+  tests and three synthetic source-audit/loader tests, on Python 3.15.0.
+  Equivalent pre-commit review and `git diff --check` pass. No restricted-data
+  run, thresholds selected from match outcomes, or accuracy claim.
+- Next: Almaz runs the metadata-only audit locally and shares only its category
+  lines. If declarations disagree, E1 reviews source conversion/layout; if they
+  agree, tracking uncertainty remains unverified and the fixed-centre candidate
+  is still not ready for E2 activation. Do not force a pass by widening a radius.
+
 - Added a human-only `--check-frame` coverage option, isolated from inference.
   It checks the connected start-tag window covering the supplied diagnostic
   frame, centre observations earlier in that same period, and ball/centre

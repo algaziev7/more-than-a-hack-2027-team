@@ -9,6 +9,25 @@
 
 ## Dedicated kickoff confirmation for PR #18 (2026-11-12)
 
+### Controlled-pass experiment
+
+- Tested the proposed relative-motion alternative in standalone
+  `possession/kickoff_pass.py` and `tests/test_kickoff_pass.py`, using synthetic
+  inputs only. Existing E3/E4 thresholds are reused; no match timing or labels.
+- It accepts offset/noisy controlled passes at reception and rejects accompanied
+  ball movement, but a controlled preparatory pass towards the centre is also
+  accepted. This is an explicit synthetic false-positive counterexample, not
+  evidence of a reliable kickoff detector. The seven-test suite preserves it.
+- **Decision:** do not wire this candidate into priors or E2. Production
+  predictions, contracts and defaults are unchanged. See
+  [experiment and limitations](../decisions/2026-11-12-e3-controlled-pass-experiment.md).
+- Verification: seven focused tests and **261 full-suite tests pass** on
+  Python 3.15.0; `git diff --check` passes. Equivalent pre-commit review checked
+  episode lifetime, missing-data behavior, feature validity and caller isolation.
+- Next: E2/E4 review the counterexample and agree an independent cue or explicit
+  fallback policy. The real-match kickoff fix remains incomplete. Do not select
+  a radius, duration or final candidate to match the published kickoff frame.
+
 ### Local diagnostic follow-up
 
 - Consolidated the investigation in `scripts/debug_kickoff.py`: source audit,

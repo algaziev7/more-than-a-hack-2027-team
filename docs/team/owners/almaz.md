@@ -9,6 +9,8 @@
 
 ## Dedicated kickoff confirmation for PR #18 (2026-11-12)
 
+- Published implementation: `0a20640`; draft review PR:
+  [#19](https://github.com/algaziev7/more-than-a-hack-2027-team/pull/19).
 - Implemented E3 option A on an isolated task worktree; shared main and other
   owners' worktrees are unchanged. `CONFIRMED_KICKOFF = 256` is an additive bit
   in existing `PriorData.diagnostic_flags`, proposed in DEAD_BALL.md before

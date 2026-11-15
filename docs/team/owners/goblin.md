@@ -1,16 +1,25 @@
 # Goblin (AI agents) — Integration and documentation
 
 - Owner: Goblin (AI agents)
-- Status: first integration increment implemented; PR #10 awaiting E1 review
-- Branch: `e5/pipeline-v1`, based on main `3197721`
+- Status: integration increment merged via PR #10; current docs synced to integrated main
+- Branch: `main` at `5e8619b` (historical work: `e5/pipeline-v1`)
 - Reviewer: E1 (Azamat)
 - Owned files: pipeline; integration tests; run-manifest/report assembly; CI;
   .gitignore; team/technical/release docs
-- Last update: 2026-11-10
+- Last update: 2026-11-14 documentation sync
 - Reference: implementation commit `6985721`;
   [PR #10](https://github.com/algaziev7/more-than-a-hack-2027-team/pull/10)
 
-## Completed
+## Current-main synchronization
+
+PR #10 and E2's decoder/follow-ups are merged. The pipeline now executes the
+real decoder, so the two historical integration skips no longer describe main.
+Remaining E5 work is release-focused: keep current docs accurate, verify the
+frozen synthetic suite, coordinate independent reproduction, assemble the final
+technical document, and record only permitted completion evidence. The original
+branch report below is retained as historical evidence.
+
+## Historical PR #10 record
 
 - Inspected fetched main and owner branches. E1/E3/E4 are merged; E2's decoder
   at `9883b4d` remains in PR #6. No existing E5 implementation was found.
@@ -54,7 +63,7 @@ Python 3.12.12/macOS arm64 with the existing `requirements-team.lock` environmen
 
 All inputs invented; no public answer labels or competition assets read.
 
-## Review, blockers and next exact action
+## Historical review and next action (superseded)
 
 - E1 reviews this PR's wiring, diagnostic manifest metadata, reproducibility
   helper and docs. No shared contract/signature/config-section changes.
@@ -71,7 +80,6 @@ All inputs invented; no public answer labels or competition assets read.
 - Full-match accuracy, improved spellF1, a final selected submission and full-data
   execution across laptops are unverified. Use allowed evidence only.
 
-Next: Azamat reviews PR #10 and E4 reviews E2 PR #6. Integrate reviewed E2/E5,
-then have an authorised teammate execute the [local release procedure](../RELEASE.md).
-The branch is committed/pushed; the shared E1 checkout remains unchanged.
-Branch work is not integrated until merged.
+The original next action was to review and merge PR #10 and PR #6. Both are now
+merged. Follow the [local release procedure](../RELEASE.md) from the synchronized
+main revision instead.

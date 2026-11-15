@@ -1,11 +1,12 @@
 # Team possession pipeline
 
-E1 inputs, E4 tracking features and E3 combined priors are merged on main.
-This E5 branch adds their wiring to `possession.state_machine.decode`, synthetic
-CI and private reproducibility manifests. E2's decoder remains in
-[PR #6](https://github.com/algaziev7/more-than-a-hack-2027-team/pull/6).
-Until a reviewed decoder is integrated, prediction exits before opening assets.
-There is no complete team submission or measured accuracy improvement yet.
+The complete deterministic pipeline is merged on `main`: E1 inputs and export,
+E4 tracking features, E3 combined priors, E2's state machine, and E5's wiring,
+synthetic CI, and private reproducibility manifests. Current integrated main is
+`5e8619b` (2026-11-12), including tracking-first evidence fusion, bounded
+backdating, restart handling, and the declared half-start gate. There is still
+no selected team submission, independent two-laptop reproduction, or measured
+full-match accuracy improvement.
 
 ## Asset-free checks
 
@@ -24,11 +25,12 @@ git diff --check
 
 On Windows use `py -3.12 -m venv .venv`, then `.venv\Scripts\python.exe`.
 CI runs these synthetic checks on Ubuntu and Windows without assets or secrets.
-Tests explicitly skip two real-decoder integration cases until E2 exists;
-the wiring/error-path tests still run. An E2 review-branch overlay was checked
-separately; see [Goblin's handoff](docs/team/owners/goblin.md) for exact evidence.
+The suite includes the real decoder integration cases. Historical pre-merge
+overlay evidence remains in [Goblin's handoff](docs/team/owners/goblin.md).
+The 2026-11-14 documentation refresh reproduced all 236 tests and the asset-free
+setup smoke on Python 3.12.12 with the pinned dependencies.
 
-## Local prediction after E2 integration
+## Local prediction
 
 Set `MTAH_DATA_DIR` on your laptop to the licensed root containing `tactical/`
 and `broadcast/`. Follow [E1 setup](docs/team/SETUP.md) for local data checks.
@@ -79,9 +81,8 @@ Manifests are private local artifacts; no input paths or arrays are serialized.
 
 Read [current context](docs/team/CONTEXT.md), [interfaces](docs/team/INTERFACES.md)
 and your [owner handoff](docs/team/owners/) before changes. E1 reviews E5.
-Existing shared contracts and module settings are unchanged. E1 should review
-the additional local diagnostic key and manifest helper; E2/E3/E4 should review
-the wiring and combined synthetic evidence before integration.
+Shared contracts and module ownership remain documented in the linked files.
+Changes to coupled settings still require the affected owners' review.
 
 The [technical draft](docs/team/TECHNICAL_DOCUMENT.md) describes actual modules
 and pending decisions. Use the [release procedure](docs/team/RELEASE.md) for

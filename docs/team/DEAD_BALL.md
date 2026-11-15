@@ -56,7 +56,7 @@ it cannot establish the referee's decision from tracking alone.
 
 ## How the guys call it
 
-Once this branch is merged, run in the existing team environment:
+Run the merged implementation in the existing team environment:
 
 ```python
 from possession.data import load_match
@@ -298,13 +298,14 @@ When motion inference is disabled, motion-gate counters are omitted. Empty
 denominators return JSON null. The helper runs priors twice when features are
 supplied; it is an opt-in investigation tool, not extra pipeline work.
 
-The strong team hints across tag windows are unchanged. E2's proposed use of
-tags only when tracking evidence is unavailable requires E2/E4 review of the
-fusion policy; this diagnostic patch does not implement that proposal.
+The strong team hints across tag windows are unchanged. E2's merged
+tracking-first fusion uses tags only when tracking is below its reliability
+floor; this diagnostic helper does not alter that policy.
 
-Synthetic follow-up: 40 E3 tests pass, including seven coverage/invariance
-tests against E4's actual feature builder. Full suite: 134 discovered, 132 pass,
-two real-decoder integration skips because E2 is absent from main. Environment:
+Historical branch verification: 40 E3 tests passed, including seven
+coverage/invariance tests against E4's actual feature builder. The then-current
+full suite discovered 134 tests, with 132 passing and two decoder skips because
+E2 had not yet merged. Environment:
 Python 3.15.0, existing pinned dependencies. No match run, label inspection,
 parameter tuning, or accuracy measurement was performed. The dominant source
 of real-match attrition remains unknown until an authorised local run.
@@ -324,8 +325,8 @@ Testing used an approved temporary environment with the team's locked packages
 on Python 3.15. The team's Python 3.12 environment needs its own run. No project
 environment, pyenv configuration, dependency lock, evaluator, or baseline changed.
 
-Still needed: review with Beks and Belek/Isken, a local real-data run by an
-authorised team member, complete pipeline integration, and allowed accuracy
+The code review and pipeline integration described above are now merged. Still
+needed: a local real-data run by an authorised team member and allowed accuracy
 validation. Tracking cannot always distinguish live pauses, ball retrieval during
 stoppages, or erroneous positions. Keep detailed real-data outputs local and out
 of Git and hosted AI chats.

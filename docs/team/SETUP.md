@@ -1,8 +1,9 @@
 # E1 setup and input contract
 
-E1's data infrastructure is merged through PR #2. Main also contains E3's
-tagging/stoppage priors and E4's tracking features. E2's decoder remains on its
-review branch; E5's integrated pipeline is absent from this checkout.
+E1's data infrastructure, E3's tagging/stoppage priors, E4's tracking features,
+E2's decoder, and E5's integrated pipeline are merged on main. The current
+checked revision is `5e8619b`, including `period_start` metadata used by the
+decoder's half-start policy.
 The public five minutes are only a pipeline
 sanity check; do not use their scores for training, tuning, or model selection.
 
@@ -92,7 +93,7 @@ not permission to tune against public GT. Keep outputs and reports local.
 `possession.contracts` exports `MatchData`, `FeatureData`, `PriorData`,
 `Prediction`, `Event`, and `SCHEMA_VERSION = 1`. Constructors validate array
 shapes, dtypes, masks, label sets and evidence ranges without mutating inputs.
-These are concrete implementations of `INTERFACES.md`, awaiting consumer review.
+These are the concrete, integrated implementations of `INTERFACES.md`.
 
 ```python
 from possession.data import load_match
@@ -106,8 +107,10 @@ match = load_match(config={"schema_version": 1, "data": {"cache": True}})
 
 Frame IDs must be exactly 1..N in the raw file; the loader maps them to 0..N-1.
 The published half intervals come from `games.half_video_blocks`. They include
-the graded pre-kickoff portion of the second half; the loader assigns no
-possession state. Normalized coordinates are scaled by `games.py` pitch size.
+the graded pre-kickoff portion of the second half. The loader assigns no labels,
+but records `metadata["period_start"]` as half 1 `live_at_entry` and half 2
+`await_start` so E2 can apply the documented start policy without hard-coded
+frame numbers. Normalized coordinates are scaled by `games.py` pitch size.
 Positions beyond the pitch are retained. Missing positions remain NaN pairs;
 zero is a valid observation. No interpolation or imputation is performed.
 `ball_speed_mps` uses the ATD third field in m/s only when the ball position is
@@ -146,7 +149,7 @@ directly. If tagging signals are already loaded as lists, use
 E5 still checks that all modules use the same frames, and that excluded frames
 receive X labels.
 
-The new stoppage-prior branch also offers
+The merged stoppage-prior implementation offers
 `possession.dead_ball.build_priors(match, features=None, config=None)`. It keeps
 the tagging clues and adds conservative motion-based evidence in the same
 PriorData type. See [DEAD_BALL.md](DEAD_BALL.md) for rules, timing, and limits.
@@ -180,16 +183,16 @@ Export validates before writing, uses UTF-8 with LF newlines, and atomically
 replaces the target. Invalid predictions preserve any existing output. No
 label coercion, extra index, blanks, or timestamps are introduced.
 
-Once E5 implements `possession.pipeline.predict_match(data_dir, config)`:
+Run the integrated `possession.pipeline.predict_match(data_dir, config)` through
+the CLI:
 
 ```bash
 .venv/bin/python scripts/predict.py --config configs/input-v1.json --output runs/dev/prediction.csv
 .venv/bin/python evaluation/validate_submission.py runs/dev/prediction.csv
 ```
 
-The CLI sets Python/NumPy seeds, resolves the local bundle path, calls E5, and
-exports its `Prediction`. Until E5 is available it exits with a clear error and
-writes no prediction. It supplies no substitute model. The prediction package
+The CLI sets Python/NumPy seeds, resolves the local bundle path, calls the
+pipeline, and exports its `Prediction`. It supplies no substitute model. The prediction package
 does not import GT or the scorer. E4 owns checking the final file, and E5 owns
 pipeline integration and independent reproduction on another laptop.
 

@@ -1,10 +1,9 @@
 # Possession system — technical draft
 
-Status: E5 review branch, 2026-11-10. This is an assembly draft, not a final
-submission document. E1/E3/E4 implementations are merged. E2's decoder is in
-[PR #6](https://github.com/algaziev7/more-than-a-hack-2027-team/pull/6) and E5's
-wiring is on `e5/pipeline-v1`. No final candidate, team-named CSV, cross-laptop
-reproduction or full-match accuracy result has been established.
+Status: integrated-main assembly draft, updated 2026-11-14 at `5e8619b`; not a
+final submission document. E1-E5 implementations are merged. No final candidate,
+team-named CSV, cross-laptop reproduction, or full-match accuracy result has
+been established.
 
 ## Approach and assets
 
@@ -64,20 +63,30 @@ confirmed stop can produce one stronger restart pulse. Missing/unusable
 observations and half changes reset motion history. These rules are untuned;
 see [DEAD_BALL.md](DEAD_BALL.md) for thresholds and reason flags.
 
-## Possession rules — E2 pending review
+## Possession rules — E2
 
-The unmerged decoder at `9883b4d` combines E4/E3 team clues by reliability, uses
-separate dead/live evidence and requires dwell before transitions. Ordinary
-pending support has bounded age and tolerates neutral gaps. Each half starts
-with D and no earlier state; ungraded frames receive X. A confirmed stop latches
-D until restart/live evidence or a longer, bounded team-evidence safety valve.
-Confirmed live play cancels a pending stop. Configuration prevents overlapping
-live/dead thresholds and bare tag restart hints from clearing the stop latch.
+The merged decoder uses tracking-first H/A evidence: decisive reliable tracking
+controls a frame, contested tracking pauses a pending transition, and tag team
+evidence fills only sub-floor tracking gaps. Dead/live evidence remains separate.
+Team changes require one second of accumulated support and are backdated to the
+latest support run without crossing a gap longer than the dwell. Tag-only frames
+cannot cancel a fresh tracking-supported turnover. Restart look-ahead can move
+the first supported possession boundary back to the restart signal.
 
-These rules aim to avoid pass/deflection flicker, but dwell can delay or miss short
-possessions. They are review-branch behavior, not merged E5 policy. E2/E4 must
-approve the final description. The unresolved case of confirmed live play with
-unknown team can remain D; no new E5 rule resolves it. E2 owns any changes.
+Each period starts in D and ungraded frames receive X. Half 1 is declared
+`live_at_entry`; half 2 is `await_start` and cannot accept team votes until E3
+confirms eligible live/restart evidence. Live evidence before the first
+`Kick Off (Start)` tag frame is ignored when that tag exists; the tag never
+proves play is live. A confirmed stop latches D until restart/live evidence or
+a longer bounded team-evidence safety valve. Confirmed live play cancels a
+pending stop. Configuration rejects overlapping live/dead thresholds and bare
+tag restart hints that would clear the stop latch.
+
+These rules aim to avoid pass/deflection flicker, but dwell can miss short
+possessions and the start gate depends on E3 confirmation/tag timing. Confirmed
+live play with an unknown team can remain D. See the
+[decision record](decisions/2026-10-23-e2-data-evidence-and-state-machine-design.md)
+for the reviewed rationale, synthetic evidence, and known limits.
 
 ## Training, validation and limitations
 
@@ -89,17 +98,18 @@ The public five minutes may check pipeline correctness only, never tuning,
 selection or accuracy improvement claims.
 
 Synthetic tests cover contracts, absent/disabled tags, frame mismatches, team
-swapping, half independence and repeatable export. E5 also combined its work
-with the unmerged E2 revision in a disposable synthetic checkout. See
-[the E5 handoff](owners/goblin.md) for measured test counts. Those results do
+swapping, half independence, start-gate behavior, and repeatable export. The
+historical pre-merge overlay evidence is retained in
+[the E5 handoff](owners/goblin.md); later E2 evidence is in
+[the E2 handoff](owners/belek_isken.md). Those results do
 not establish hidden-match accuracy. Restricted full-data jobs and exact CSV
 hash reproduction on a second laptop remain human-run release requirements.
 
 ## Reproduction
 
 Use Python 3.12 and `requirements-team.lock`; run the synthetic suite and setup
-smoke test from a clean checkout. After reviewed E2/E5 integration, set the local
-licensed bundle root, then use [TEAM_README.md](../../TEAM_README.md) to run the
+smoke test from a clean checkout. Set the local licensed bundle root, then use
+[TEAM_README.md](../../TEAM_README.md) to run the
 CLI or save the CSV plus private manifest. Records include code/config/input
 hashes, environment, seed, runtime and validated output checksum. The final
 commit, config, registered team name, public repository URL and second-laptop

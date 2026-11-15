@@ -35,24 +35,25 @@ no complete team prediction or accuracy improvement is established here.
 
 ## Integrated behavior
 
-`possession.pipeline.predict_match` runs loader -> tracking features -> combined
-priors -> decoder and enforces shared types, timeline alignment, valid labels,
-and X outside the supplied half masks. Missing/disabled tags remain supported.
-The decoder keeps stopped/live evidence separate from team evidence, uses
-tracking before tags, and records transition/source/period-start diagnostics.
+E2's decoder (`possession.state_machine.decode`, Decisions 1-11) is merged on
+main via PRs #6, #12, #13 and #18; see [E2's handoff](owners/belek_isken.md).
+The unresolved live-play/unknown-team behavior needs E2/E3/E4 agreement.
 
-Half 1 is declared `live_at_entry`; half 2 waits for eligible E3 live/restart
-evidence. When a `SET PIECES` / `Kick Off (Start)` tag exists in the current
-period block, its first frame is only a lower eligibility bound: the tag never
-proves that play is live. See the
-[decision record](decisions/2026-10-23-e2-data-evidence-and-state-machine-design.md)
-and [technical draft](TECHNICAL_DOCUMENT.md) for the implemented policy and
-known limits.
+[E5 PR #10](https://github.com/algaziev7/more-than-a-hack-2027-team/pull/10)
+(`e5/pipeline-v1`, implementation `6985721`) adds thin loader -> features -> priors -> decoder wiring,
+cross-stage checks, local run manifests, synthetic Ubuntu/Windows CI, a PR
+template, artifact filename/ignore guards, and team/technical/release docs.
+Missing E2 fails before assets are read. Missing/disabled tags remain supported.
+No shared signatures, fields or configuration sections changed. Hosted synthetic
+CI passed on Ubuntu and Windows for this implementation. See
+[Goblin's handoff](owners/goblin.md) for actual test evidence and next steps.
+Since then the pipeline also rejects unknown top-level configuration sections and
+refuses to export a half that is entirely D.
 
 ## Remaining gates
 
-1. Re-run the merged synthetic suite in the pinned environment and confirm
-   hosted CI remains asset- and credential-free.
+1. Done: E5 and E2 are reviewed and merged. Confirm the combined pipeline on
+   synthetic inputs. Hosted CI must require no restricted assets or credentials.
 2. An authorised teammate runs the complete system locally and E4 validates
    the exact CSV. A second laptop independently reproduces identical CSV bytes.
 3. Owners confirm method/training provenance; finalise the

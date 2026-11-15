@@ -12,6 +12,9 @@ from possession.dead_ball import build_priors
 from possession.features import build_features
 from possession.run_manifest import capture_run
 
+# Every top-level section some stage reads. A misspelt one would otherwise be silently ignored.
+CONFIG_SECTIONS = {"schema_version", "seed", "data", "tagging", "dead_ball", "state_machine"}
+
 
 def _decoder():
     try:
@@ -39,6 +42,10 @@ def predict_match(data_dir=None, config=None) -> Prediction:
     Each stage receives the full JSON config, with no new config sections.
     """
     config = copy.deepcopy(validate_config(config))
+    unknown = sorted(set(config) - CONFIG_SECTIONS)
+    if unknown:
+        raise ValueError("unknown configuration sections {}; expected only {}".format(
+            unknown, sorted(CONFIG_SECTIONS)))
     decode = _decoder()
     # Capture code identity before execution; manifests are private diagnostics.
     run = capture_run(config)
@@ -70,6 +77,13 @@ def predict_match(data_dir=None, config=None) -> Prediction:
         raise ValueError("prediction and match must use the same frame timeline")
     if np.any(prediction.labels[match.half == 0] != "X"):
         raise ValueError("E2 must return X outside the supplied half intervals")
+    # A half labelled entirely D (e.g. a half-start gate that never opened) is never a real
+    # result: fail rather than export it. Uses only contract fields; the message has no match data.
+    for half in np.unique(match.half[match.half > 0]):
+        if np.all(prediction.labels[match.half == half] == "D"):
+            raise RuntimeError("half {} is labelled entirely D, so no submission was written; "
+                               "decode locally and check diagnostics['period_starts']"
+                               .format(int(half)))
 
     run.update(
         runtime_s=time.perf_counter() - started,

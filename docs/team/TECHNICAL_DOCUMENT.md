@@ -65,28 +65,40 @@ see [DEAD_BALL.md](DEAD_BALL.md) for thresholds and reason flags.
 
 ## Possession rules — E2
 
-The merged decoder uses tracking-first H/A evidence: decisive reliable tracking
-controls a frame, contested tracking pauses a pending transition, and tag team
-evidence fills only sub-floor tracking gaps. Dead/live evidence remains separate.
-Team changes require one second of accumulated support and are backdated to the
-latest support run without crossing a gap longer than the dwell. Tag-only frames
-cannot cancel a fresh tracking-supported turnover. Restart look-ahead can move
-the first supported possession boundary back to the restart signal.
+`possession/state_machine.py` turns the per-frame evidence into labels with a
+hysteresis state machine. The reasoning behind each rule is in the
+[E2 decision record](decisions/2026-10-23-e2-data-evidence-and-state-machine-design.md)
+(Decisions 1-11).
 
-Each period starts in D and ungraded frames receive X. Half 1 is declared
-`live_at_entry`; half 2 is `await_start` and cannot accept team votes until E3
-confirms eligible live/restart evidence. Live evidence before the first
-`Kick Off (Start)` tag frame is ignored when that tag exists; the tag never
-proves play is live. A confirmed stop latches D until restart/live evidence or
-a longer bounded team-evidence safety valve. Confirmed live play cancels a
-pending stop. Configuration rejects overlapping live/dead thresholds and bare
-tag restart hints that would clear the stop latch.
+- **Team evidence.** Tracking whose reliability clears a floor decides a frame
+  alone; contested tracking (a duel) gives no vote. Tags fill only frames where
+  tracking is below the floor and are never averaged with it. A tag-only frame
+  cannot cancel a pending turnover that tracking supports.
+- **Team changes.** A change needs 1.0 s of support, because CHALLENGE.md asks
+  for controlled possession rather than a touch. A frame without decisive
+  evidence (often a missing ball) pauses the count instead of resetting it, and
+  support older than 6 s is dropped. Once confirmed, the boundary moves back to
+  the start of its latest support run; the first change after a restart signal
+  takes the restart frame when it follows within 2 s.
+- **Stoppages.** E3's confirmed stop enters D after two frames (E3 has already
+  waited 0.6 s). Leaving a confirmed stop needs E3's live-motion or restart
+  evidence; team evidence alone can end it only after 3 s, so a missed restart
+  cannot pin D indefinitely.
+- **Periods.** Each half starts in D with no memory of the previous one. Half 1
+  is graded from its kickoff and is live from its first graded frame. Half 2 is
+  graded from before its kickoff (FAQ.md), so it stays D until E3 confirms play
+  started, and never before the half's first `Kick Off (Start)` tag frame; a
+  half without such a tag falls back to E3's confirmation alone. X is used only
+  for ungraded frames.
 
-These rules aim to avoid pass/deflection flicker, but dwell can miss short
-possessions and the start gate depends on E3 confirmation/tag timing. Confirmed
-live play with an unknown team can remain D. See the
-[decision record](decisions/2026-10-23-e2-data-evidence-and-state-machine-design.md)
-for the reviewed rationale, synthetic evidence, and known limits.
+Known limits: possessions shorter than about 1 s can be missed; stops are
+labelled when E3 confirms them, not when the ball went dead; stoppages inside the
+pitch without a set-piece tag are not detected; live play whose team is unknown
+stays D; the 3 s fallback can end a stop on team evidence alone (including tags)
+without proof that play resumed; a stale opposing tag during a long ball
+occlusion can create a brief turnover; a start tag that begins early or late
+shifts the second-half start. All thresholds are engineering choices, not fitted
+values, and none was chosen against the public five minutes.
 
 ## Training, validation and limitations
 
@@ -104,6 +116,15 @@ historical pre-merge overlay evidence is retained in
 [the E2 handoff](owners/belek_isken.md). Those results do
 not establish hidden-match accuracy. Restricted full-data jobs and exact CSV
 hash reproduction on a second laptop remain human-run release requirements.
+
+Use of published answers: the public five minutes were scored once, as a
+pipeline check (frame alignment, label meaning), and not used to choose between
+versions. The second-half start rule (Decision 11) was checked once, locally,
+against the second-half kickoff frame published in FAQ.md, with yes/no answers
+only: whether the start tag begins after the early opening it was meant to
+prevent, and whether the first second-half possession is at or after the
+published kickoff. No threshold or frame was chosen from that check and nothing
+was iterated against it.
 
 ## Reproduction
 

@@ -270,7 +270,7 @@ setup check, not permission to select or tune variants using that score.
 Planned team command, to be implemented by E1/E5:
 
 ```bash
-python scripts/predict.py --config configs/final.json --output runs/final/team_name.csv
+python scripts/predict.py --config configs/input-v1.json --output runs/final/team_name.csv
 python evaluation/validate_submission.py runs/final/team_name.csv
 ```
 

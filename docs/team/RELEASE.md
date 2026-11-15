@@ -11,7 +11,8 @@ do not expose their contents or detailed diagnostics to hosted AI tools.
 2. A repository admin configures required PR review and the synthetic CI checks
    on main. E5 inspected main on 2026-11-10: unprotected; the connected account
    has push/triage rights but no admin rights. Configuration was not changed.
-3. Freeze a clean committed code revision and JSON config. Record purpose,
+3. Freeze a clean committed code revision and JSON config (`configs/input-v1.json`;
+   every unset threshold is the code default, frozen with the commit). Record purpose,
    evidence source and parameter-selection method using the
    [experiment template](experiments/TEMPLATE.md). Every owner confirms their
    [technical-document](TECHNICAL_DOCUMENT.md) section and training-data provenance.

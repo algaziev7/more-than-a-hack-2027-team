@@ -156,11 +156,14 @@ not imply stopped play. Keep time thresholds in seconds and convert using fps.
 Integrated implementation:
 
 - Goblin's `predict_match(data_dir, config)` connects loading, features, clues,
-  and the state machine.
+  and the state machine. It rejects top-level config sections that no stage reads
+  (a new section must be added to `pipeline.CONFIG_SECTIONS`), and refuses to return
+  a prediction in which a whole half is D.
 - Azamat's implemented `write_submission(prediction, path)` writes the exact `frame,label`
   CSV with all frames in order, no extra columns, and no empty labels.
 - Azamat's implemented `scripts/predict.py` loads settings, seeds Python/NumPy,
-  calls Goblin's pipeline, and saves the CSV.
+  calls Goblin's pipeline, and saves the CSV. If the pipeline raises, it writes
+  no prediction.
 - Beks's check calls the official submission validator.
 
 Prediction code must not read the public answer file. Scoring is a separate

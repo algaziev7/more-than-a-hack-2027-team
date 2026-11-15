@@ -1,13 +1,22 @@
 # Almaz — Event tags and stoppages
 
 - Owner: Almaz
-- Status: priors merged via PR #5; PR #11 review correction verified; ready for E2/E4 re-review
-- Branch: `e3/prior-coverage-diagnostics`
+- Status: tagging, priors, and PR #11 bounded-gap correction merged on main
+- Branch: `main` at `5e8619b` (historical work: `e3/prior-coverage-diagnostics`)
 - Reviewer: Beks and Belek/Isken; Azamat for shared types
 - Files: `possession/dead_ball.py`, its tests, and related docs
-- Last update: 2026-11-11
+- Last update: 2026-11-14 documentation sync
 
-## Current follow-up: E2's low dead-ball coverage report
+## Current-main synchronization
+
+PR #11, E2's tracking-first fusion, and the Decisions 10-11 half-start work are
+merged. E3's live/restart evidence now participates in the integrated pipeline
+and the half-start gate. Remaining work is authorised local diagnostics and
+quality validation, followed by owner sign-off on the frozen configuration.
+The dated branch sections below remain historical evidence, so their pre-merge
+status and test counts are not current-main claims.
+
+## Historical follow-up: E2's low dead-ball coverage report
 
 ### PR #11 review correction (2026-11-11)
 

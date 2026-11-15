@@ -1,8 +1,9 @@
 # E2 algorithm validation and engineering setup
 
 Date: 2026-10-23. Owners: Belek and Isken, working together on E2.
-Status: original implementation plan, with an implemented first validation
-increment on `e2/isken-validation` as of 2026-11-08. See the
+Status: historical implementation plan. Its first validation increment merged
+through PR #6/#7, and later decoder decisions are merged on main through PR #18.
+See the
 [synthetic validation report](experiments/2026-11-08-e2-synthetic-validation.md)
 for actual checks, fixes, timing measurements, and remaining policy questions.
 Historical assessments and proposed gates below are not current completion claims.

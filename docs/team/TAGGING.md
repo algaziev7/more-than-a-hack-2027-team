@@ -5,9 +5,9 @@ possible team, a weight for that clue, and a possible restart around that time.
 Belek and Isken combine these with Beks's tracking features to decide possession.
 
 The tagging code, adapter, and Azamat's loader are merged. This guide describes
-the tagging-only path, which leaves dead-ball fields neutral. The new
-`almaz/dead-ball-priors` branch adds movement-based clues through a separate
-function; see [DEAD_BALL.md](DEAD_BALL.md).
+the tagging-only path, which leaves dead-ball fields neutral. The merged
+dead-ball module adds movement-based clues through a separate function; see
+[DEAD_BALL.md](DEAD_BALL.md).
 
 ## 1. Recommended: use events that Azamat already loaded
 
@@ -28,9 +28,9 @@ handles the conversion and checks the result. No manual conversion is needed.
 Load the match and build the clues once at the start. Keep `priors` in memory
 and pass it to the state machine. There is no intermediate file to send.
 
-The planned state-machine call is `decode(match, features, priors, config)`.
-`features` comes from Beks. That call is a plan, not an implemented function
-in this branch.
+The integrated state-machine call is `decode(match, features, priors, config)`.
+`features` comes from E4; E2 uses reliable tracking first and tags only when
+tracking is below its configured reliability floor.
 
 ## 2. Read the clues for the current frame
 
@@ -99,9 +99,9 @@ agreed team environment; the adapter does not install anything.
 The tagging-only helpers always return `dead_evidence=0.5` and
 `dead_reliability=0`. This means they provide no stopped-play opinion.
 
-The new branch implements `possession.dead_ball.build_priors(match, features,
-config)`, which adds motion-supported stopped/live-play clues. Features are
-optional. Review and integration are still pending; read
+`possession.dead_ball.build_priors(match, features, config)` adds
+motion-supported stopped/live-play clues. Features are optional. It is called
+by the integrated pipeline; read
 [DEAD_BALL.md](DEAD_BALL.md) before using it. `build_tagging_priors()` retains
 its original tagging-only behavior.
 

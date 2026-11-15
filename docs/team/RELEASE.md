@@ -4,9 +4,10 @@ Status: no selected submission, full-data prediction, second-laptop reproduction
 or upload is established by this E5 work. Execute restricted-data steps locally;
 do not expose their contents or detailed diagnostics to hosted AI tools.
 
-1. Review and merge E2's decoder and E5's integration. E1 reviews E5 and E4
-   reviews E2. Confirm E2/E3's unknown-team live-play policy and the actual
-   configuration. Do not select thresholds or a candidate on public-window scores.
+1. Confirm the merged E2/E5 integration at the frozen revision, obtain owner
+   sign-off on the actual configuration and the documented unknown-team
+   live-play policy, and run the synthetic checks. Do not select thresholds or
+   a candidate on public-window scores.
 2. A repository admin configures required PR review and the synthetic CI checks
    on main. E5 inspected main on 2026-11-10: unprotected; the connected account
    has push/triage rights but no admin rights. Configuration was not changed.
@@ -37,7 +38,7 @@ do not expose their contents or detailed diagnostics to hosted AI tools.
    Record confirmation and the frozen version. Do not overwrite this release
    with later experiments. Check organiser deadline updates through registration.
 
-Open dependencies: reviewed E2/E5 integration, admin protection/public visibility,
+Open dependencies: frozen integrated revision/config, admin protection/public visibility,
 local full-data execution, independent second-laptop hash agreement, owner sign-off,
 registered team name and human upload confirmation. Format checks establish no
 competition accuracy improvement.

@@ -2,7 +2,7 @@
 
 - Owner: E2 (belekayazbekov)
 - Review: E4 (per TEAM_PLAN.md's reviewer table)
-- Status: implemented and merged on main (Decisions 1-11)
+- Status: Decisions 1-11 implemented and merged on main through PR #18
 - Scope: this is reasoning and context, not a spec. The authoritative module contract is
   `docs/team/INTERFACES.md`; the authoritative task/data/scoring definitions are
   `CHALLENGE.md`, `DATA.md`, `EVALUATION.md`. If anything here conflicts with those, they win.

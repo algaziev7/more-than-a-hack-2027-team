@@ -1,9 +1,8 @@
 # How the team's modules pass data to each other
 
-Almaz's tagging helper and adapter, plus Azamat's contracts, loader, exporter,
-and CLI are merged on main. This branch adds motion-based stopped/live-play
-clues in `possession/dead_ball.py`; see [DEAD_BALL.md](DEAD_BALL.md).
-Feature building (E4), decoding (E2) and the full pipeline (E5) are merged too. See
+Azamat's contracts/loader/exporter/CLI, Beks's features, Almaz's tagging and
+stopped/live priors, Belek and Isken's decoder, and Goblin's full pipeline are
+merged on main. This document describes their shared contract; see
 [SETUP.md](SETUP.md) for concrete constructors and synthetic examples.
 
 Before changing a shared field or function, tell the people who use it and ask
@@ -54,7 +53,7 @@ reading videos. Do not include the answer file in this input.
 
 ## Beks: calculate clues from tracking
 
-Function: `build_features(match, config) -> FeatureData`.
+Implemented function: `build_features(match, config) -> FeatureData`.
 
 Return frame numbers, named feature arrays, and a true/false validity array for
 each feature. `FeatureData.features` and `.validity` are dictionaries with
@@ -94,7 +93,7 @@ Python lists and work without NumPy. If you already have those signals, call
 `to_prior_data(signals)` to convert them. Only the adapter needs the NumPy
 dependency already used by Azamat's code. See [TAGGING.md](TAGGING.md).
 
-The combined function is implemented on this branch:
+The combined function is implemented on main:
 
 ```python
 from possession.dead_ball import build_priors
@@ -132,14 +131,15 @@ stop context or reliable team-control evidence. One stronger restart pulse can
 follow each confirmed stop. Missing observations and half changes reset history;
 excluded frames are neutral. Confirmation already adds a delay, so E2 should
 account for it before adding further persistence. Details and reason bits are
-in [DEAD_BALL.md](DEAD_BALL.md). Review these semantics with E2/E4 before merging.
+in [DEAD_BALL.md](DEAD_BALL.md). Review future semantic or setting changes with
+E2/E4 because they consume this evidence.
 
 Repeated tags must not make a clue stronger. Opposing attacking hints cancel
 where they overlap. A restart tag does not identify the exact restart frame.
 
 ## Belek and Isken: decide possession
 
-Function: `decode(match, features, priors, config) -> Prediction`.
+Implemented function: `decode(match, features, priors, config) -> Prediction`.
 
 Read Beks's features and Almaz's clues for each frame. Combine their weights
 with the state machine's rules to produce one label per frame: H, A, D, or X.
@@ -153,7 +153,7 @@ not imply stopped play. Keep time thresholds in seconds and convert using fps.
 
 ## Goblin and Azamat: run everything and write the CSV
 
-Implemented E1 infrastructure and integration:
+Integrated implementation:
 
 - Goblin's `predict_match(data_dir, config)` connects loading, features, clues,
   and the state machine. It rejects top-level config sections that no stage reads

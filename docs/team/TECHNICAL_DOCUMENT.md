@@ -1,9 +1,9 @@
 # Possession system — technical draft
 
-Status: release-candidate draft, 2026-11-12. All five modules (E1-E5) are
-merged on main and run end to end. Still open: the frozen release commit, the
-second-laptop reproduction, owner sign-offs and the registered team name. No
-full-match accuracy result is claimed.
+Status: integrated-main assembly draft, updated 2026-11-14 at `5e8619b`; not a
+final submission document. E1-E5 implementations are merged. No final candidate,
+team-named CSV, cross-laptop reproduction, or full-match accuracy result has
+been established.
 
 ## Approach and assets
 
@@ -110,9 +110,10 @@ The public five minutes may check pipeline correctness only, never tuning,
 selection or accuracy improvement claims.
 
 Synthetic tests cover contracts, absent/disabled tags, frame mismatches, team
-swapping, half independence and repeatable export, and the full pipeline runs on
-invented inputs in CI. See
-[the E5 handoff](owners/goblin.md) for measured test counts. Those results do
+swapping, half independence, start-gate behavior, and repeatable export. The
+historical pre-merge overlay evidence is retained in
+[the E5 handoff](owners/goblin.md); later E2 evidence is in
+[the E2 handoff](owners/belek_isken.md). Those results do
 not establish hidden-match accuracy. Restricted full-data jobs and exact CSV
 hash reproduction on a second laptop remain human-run release requirements.
 
@@ -128,8 +129,8 @@ was iterated against it.
 ## Reproduction
 
 Use Python 3.12 and `requirements-team.lock`; run the synthetic suite and setup
-smoke test from a clean checkout. Set the local
-licensed bundle root, then use [TEAM_README.md](../../TEAM_README.md) to run the
+smoke test from a clean checkout. Set the local licensed bundle root, then use
+[TEAM_README.md](../../TEAM_README.md) to run the
 CLI or save the CSV plus private manifest. Records include code/config/input
 hashes, environment, seed, runtime and validated output checksum. The final
 commit, config, registered team name, public repository URL and second-laptop

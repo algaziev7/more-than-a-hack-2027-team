@@ -1,11 +1,18 @@
 # Beks — Tracking features and evaluation
 
 - Owner: Beks
-- Status: v1 merged (PR #8); option (c) implemented, agreed with E2, PR pending
-- Branch: `e4/reliability-v1` (v1 was `e4/features-v1`)
+- Status: features and revised reliability merged through PR #14; integrated with E2
+- Branch: `main` at `5e8619b` (historical work: `e4/reliability-v1`)
 - Reviewer: E3
 - Owned files: `possession/features.py`, `scripts/check_solution.py`, feature tests and evaluation policy
-- Last update: 2026-11-11
+- Last update: 2026-11-14 documentation sync
+
+## Current-main synchronization
+
+PR #14 and E2 Decisions 7-11 are merged. E4's remaining release duties are to
+review the frozen configuration and run `scripts/check_solution.py` on the exact
+locally generated final CSV. The dated review/comparison sections below are
+retained as historical evidence; their pending-PR instructions are superseded.
 
 ## Feature handoff
 
@@ -182,7 +189,7 @@ between spells of the other team, with their margins); if they are flicker,
 he adds backdating to PR #13 so a longer dwell decides whether a turnover
 happened without delaying its boundary; then one rerun of both and decide.
 
-## Next exact action
+## Historical next action (superseded)
 
 After Almaz confirms the fixes, merge PR #14. Then review Almaz's PR #11.
 Rerun the four-variant comparison once Belek's bounce-back count and any

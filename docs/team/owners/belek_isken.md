@@ -1,14 +1,23 @@
 # Belek and Isken — Possession state machine
 
 - Owner: Belek and Isken
-- Status: Decisions 7-9 on `main` (PR #13); Decisions 10-11 (half-start gate) in review
-- Branch: Belek on `e2/half-start-gate`
+- Status: Decisions 1-11 merged on main through PR #18
+- Branch: `main` at `5e8619b` (historical work: `e2/half-start-gate`)
 - Reviewer: E4
 - Owned files: possession/state_machine.py; state-machine configuration and tests
-- Current milestone: synthetic decoder validation and E3/export integration
-- Last update: 2026-11-12 (Belek's track, Decision 11)
+- Current milestone: frozen-config verification and release sign-off
+- Last update: 2026-11-14 documentation sync
 
-## Pair coordination
+## Current-main synchronization
+
+The half-start gate and start-tag eligibility rule described below merged in
+PR #18 together with E1's `period_start` metadata. This documentation sync
+independently reproduced all 236 tests on Python 3.12.12 with the pinned
+dependencies. Remaining E2 work is to sign off the frozen config,
+review authorised local diagnostics, and document the live-but-unknown-team
+limit. Earlier corrective and branch sections are retained as historical evidence.
+
+## Historical pair coordination
 
 Isken's first validation pass (PR #7) is merged into Belek's PR #6. The current
 corrective follow-up is based on `9883b4d` from PR #6. E4 remains the behavior

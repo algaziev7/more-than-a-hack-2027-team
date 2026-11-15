@@ -1,14 +1,23 @@
 # Azamat — Data and infrastructure
 
 - Owner: Azamat
-- Status: E1 infrastructure merged in PR #2; Windows path fix verified synthetically, awaiting review
-- Branch: e1/data-contract
+- Status: E1 infrastructure and path fix merged; period-start metadata merged in PR #18
+- Branch: `main` at `5e8619b` (historical work: `e1/data-contract`)
 - Reviewer: E5
 - Owned files: possession/contracts.py; possession/data.py; possession/export.py; scripts/predict.py; environment files
-- Current milestone: portability follow-up and preparation for E5 integration
-- Last update: 2026-11-10
+- Current milestone: frozen-config/full-data verification and release reproduction
+- Last update: 2026-11-14 documentation sync
 
-## Completed and verified
+## Current-main synchronization
+
+E5's pipeline and E2's decoder are now merged, and E1's loader emits the
+`period_start` metadata consumed by Decisions 10-11. The remaining E1 work is
+the locally authorised inventory/video/cache/baseline verification, final CSV
+generation, and exact second-laptop reproduction. The dated branch narrative
+below is retained as historical evidence; statements that E2/E5 are absent or
+awaiting merge are superseded by this section.
+
+## Historical branch record
 
 - Implemented version 1 MatchData, FeatureData, PriorData, Prediction and Event
   contracts in `possession/contracts.py`, with shared invented examples in
@@ -50,7 +59,7 @@
 - Added the E1 method/limitations section to [SETUP.md](../SETUP.md) for E5's
   technical-document assembly. No restricted-data checks ran in this follow-up.
 
-## Next exact action
+## Historical next action (superseded)
 
 Have Beks rerun the full suite on Windows with this path fix; request E5's E1
 review before merging the follow-up. Run the remaining checks locally using
@@ -61,7 +70,7 @@ E5 can connect the merged E1/E3/E4 modules after E2's decoder is reviewed/merged
 E1 then reviews the pipeline and verifies identical CSV bytes with E5 on a
 second laptop. E5 should refresh the stale integrated CONTEXT after integration.
 
-## Blockers and dependencies
+## Historical blockers and dependencies
 
 - E5's `possession/pipeline.py` is not present on this branch; actual prediction
   exits explicitly with no output until that module is integrated.

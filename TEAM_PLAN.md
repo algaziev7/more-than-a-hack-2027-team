@@ -116,9 +116,9 @@ the prediction algorithm to run causally or in real time.
 
 Own `possession/tagging.py`, `possession/dead_ball.py`, their configuration/tests.
 
-Implementation update (2026-11-01): tagging and its shared-format adapter are
-merged. `almaz/dead-ball-priors` adds the first stoppage/live-play evidence
-builder, with review and real-data validation pending. See
+Implementation update (2026-11-14): tagging, its shared-format adapter, the
+stoppage/live-play evidence builder, and the reviewed bounded-gap follow-up are
+merged. Real-data quality validation remains pending. See
 [DEAD_BALL.md](docs/team/DEAD_BALL.md) and [Almaz's handoff](docs/team/owners/almaz.md).
 
 1. Reuse the starter XML loader. Convert tag times onto the tactical frame axis
